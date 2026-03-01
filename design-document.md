@@ -12,20 +12,33 @@ There are **71 rules** total. Each one:
 
 ## 2. Documentation Sources
 
-You may consult these references while building plugins. Use `curl` to fetch them:
+The `reference/` directory contains local documentation covering GritQL and Biome's plugin system. Read these before writing your own plugins:
 
-| URL | What it covers |
-|-----|---------------|
-| `https://biomejs.dev/linter/plugins/` | Plugin setup, `register_diagnostic()` API, `biome.json` config |
-| `https://biomejs.dev/reference/gritql/` | GritQL syntax in Biome: metavariables, where clauses, AST node matching |
-| `https://docs.grit.io/language/syntax` | Full GritQL language reference: all operators, traversals, conditions |
+| File | What it covers |
+|------|---------------|
+| `reference/plugins.md` | Biome plugin setup, `register_diagnostic()` API, target languages |
+| `reference/example.grit` | Working example plugin — reports `Object.assign()` usage, demonstrates basic pattern matching and `register_diagnostic()` |
+| `reference/config.md` | `.grit/grit.yaml` configuration, markdown pattern spec, ignoring patterns |
+| `reference/patterns.md` | Custom pattern definitions, predicate definitions, `.grit` file conventions |
+| `reference/react.md` | Matching and transforming React/JSX components |
+| `reference/testing.md` | Testing GritQL patterns with `grit patterns test`, YAML test samples |
+| `reference/imports.md` | `ensure_import_from` and import management patterns |
+| `reference/duplicating.md` | Using `text()` to duplicate/preserve code during rewrites |
+| `reference/sharing.md` | Publishing and importing patterns across repositories |
 
 These are your primary references. When a pattern isn't working, re-read the docs — don't guess at syntax.
+
+**Additional external references** (if you need more detail beyond the local docs):
+- `https://docs.grit.io/language/syntax` — Full GritQL language reference
+- `https://biomejs.dev/linter/plugins/` — Biome plugin docs (upstream)
+- `https://biomejs.dev/reference/gritql/` — Biome GritQL reference (upstream)
 
 ## 3. Project Structure
 
 ```
-package.json          # Already exists in the base project (includes @biomejs/biome, vitest)
+package.json          # You create this — see below
+tsconfig.json         # You create this — see below
+vitest.config.ts      # You create this — see below
 biome.json            # You create this — see Section 4
 plugins/              # You create this directory
   <rule-name>.grit    # One file per rule — add incrementally
@@ -41,11 +54,63 @@ The 71 rules to implement (each becomes `plugins/<name>.grit`):
 
 ### `package.json`
 
-The base project already includes `@biomejs/biome`. Do **not** overwrite `package.json`. If biome is not installed, add it:
+Create this file at the project root:
 
-```sh
-npm install --save-dev @biomejs/biome@2.4.4
+```json
+{
+  "name": "biome-react-rules",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome lint"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.4",
+    "vitest": "^3.1.4"
+  }
+}
 ```
+
+Then run `npm install` to install dependencies.
+
+### `tsconfig.json`
+
+Create this file at the project root:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}
+```
+
+This is for type checking and IDE support only — vitest handles compilation.
+
+### `vitest.config.ts`
+
+Create this file at the project root to scope test discovery to `src/`:
+
+```ts
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    include: ["src/**/*.test.ts"],
+  },
+});
+```
+
+This ensures `npx vitest run` only picks up the agent's tests in `src/rules/` and doesn't scan other directories.
 
 ## 4. `biome.json` Configuration
 
@@ -100,7 +165,7 @@ Key points:
 
 ## 5. GritQL Quick Reference
 
-This is a concise primer. For full details, `curl` the documentation URLs in Section 2.
+This is a concise primer. For full details, consult the reference documentation in the `reference/` directory (see Section 2).
 
 ### Language Declaration
 
@@ -236,32 +301,54 @@ or
 - Use `bubble` when descending into callbacks or nested structures
 - Prefer matching the smallest relevant AST node
 
-## 6. Reference Plugins
+## 6. Reference Documentation
 
-The `reference/` directory contains three working example plugins. Study these before writing your own:
+The `reference/` directory contains documentation covering GritQL and Biome's plugin system. Read these before writing your own plugins:
 
-### `reference/no-danger.grit` — Attribute Detection on DOM Elements
+### `reference/plugins.md` — Biome Plugin System
 
-Demonstrates:
-- Matching JSX attributes by name (`dangerouslySetInnerHTML`)
-- Distinguishing DOM elements (lowercase) from components (uppercase) with regex
-- Handling both self-closing and open/close element forms
-- Producing a diagnostic with the attribute name in the message
+The most important reference. Covers:
+- How to write a GritQL plugin for Biome's linter
+- The `register_diagnostic()` function (span, message, severity)
+- Target language declaration (`language css;` etc.)
+- How to enable plugins in `biome.json`
 
-### `reference/button-has-type.grit` — Missing/Invalid Attribute Detection
+### `reference/example.grit` — Working Example Plugin
 
-Demonstrates:
-- Detecting a **missing** attribute with `not ... contains`
-- Validating attribute values against an allowlist using `or`
-- Multiple `or`-joined top-level patterns for different error cases
-- Handling both self-closing and children-bearing forms
+A complete, minimal GritQL plugin that reports on `Object.assign()` usage, suggesting object spread instead. Demonstrates:
+- Backtick pattern matching with metavariable capture (`$fn`, `$args`)
+- Using `<:` to match a specific function name
+- Calling `register_diagnostic()` with `span` and `message`
 
-### `reference/self-closing-comp.grit` — Structural Pattern (Empty Elements)
+This is the simplest possible plugin — study it as a starting template.
 
-Demonstrates:
-- Matching elements with open/close tags but no children
-- Using `as $element` to capture the full element for the diagnostic span
-- A simple single-message rule
+### `reference/patterns.md` — Custom Pattern Definitions
+
+Covers:
+- The `pattern` keyword and named pattern syntax
+- Predicate definitions
+- `.grit` file conventions and auto-loading from `.grit/patterns/`
+
+### `reference/react.md` — React/JSX Patterns
+
+Covers:
+- Matching JSX elements (self-closing and with children)
+- Handling `or` for both element forms
+- Metavariable capture on tag names, props, and children
+
+### `reference/config.md` — Grit Configuration
+
+Covers:
+- `.grit/grit.yaml` structure and pattern metadata fields
+- Markdown pattern file spec
+- Pattern suppression and `.gritignore`
+
+### Other references
+
+- `reference/testing.md` — Testing patterns with `grit patterns test` and YAML samples
+- `reference/imports.md` — `ensure_import_from` pattern for managing imports
+- `reference/duplicating.md` — `text()` function for preserving original code
+- `reference/sharing.md` — Publishing and importing patterns across repos
 
 ## 7. Diagnostic Messages
 
