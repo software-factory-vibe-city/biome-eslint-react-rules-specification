@@ -25,97 +25,53 @@ These are your primary references. When a pattern isn't working, re-read the doc
 ## 3. Project Structure
 
 ```
-package.json
-biome.json
-plugins/
-  async-server-action.grit
-  button-has-type.grit
-  checked-requires-onchange-or-readonly.grit
-  destructuring-assignment.grit
-  display-name.grit
-  forbid-component-props.grit
-  forbid-foreign-prop-types.grit
-  forbid-prop-types.grit
-  forward-ref-uses-ref.grit
-  hook-use-state.grit
-  iframe-missing-sandbox.grit
-  jsx-boolean-value.grit
-  jsx-child-element-spacing.grit
-  jsx-curly-brace-presence.grit
-  jsx-curly-spacing.grit
-  jsx-equals-spacing.grit
-  jsx-handler-names.grit
-  jsx-key.grit
-  jsx-newline.grit
-  jsx-no-bind.grit
-  jsx-no-comment-textnodes.grit
-  jsx-no-constructed-context-values.grit
-  jsx-no-duplicate-props.grit
-  jsx-no-leaked-render.grit
-  jsx-no-literals.grit
-  jsx-no-script-url.grit
-  jsx-no-target-blank.grit
-  jsx-no-useless-fragment.grit
-  jsx-pascal-case.grit
-  jsx-props-no-multi-spaces.grit
-  jsx-props-no-spread-multi.grit
-  jsx-props-no-spreading.grit
-  jsx-space-before-closing.grit
-  jsx-wrap-multilines.grit
-  no-access-state-in-setstate.grit
-  no-adjacent-inline-elements.grit
-  no-array-index-key.grit
-  no-arrow-function-lifecycle.grit
-  no-children-prop.grit
-  no-danger.grit
-  no-danger-with-children.grit
-  no-deprecated.grit
-  no-did-mount-set-state.grit
-  no-did-update-set-state.grit
-  no-direct-mutation-state.grit
-  no-find-dom-node.grit
-  no-invalid-html-attribute.grit
-  no-is-mounted.grit
-  no-multi-comp.grit
-  no-namespace.grit
-  no-object-type-as-default-prop.grit
-  no-redundant-should-component-update.grit
-  no-render-return-value.grit
-  no-set-state.grit
-  no-this-in-sfc.grit
-  no-typos.grit
-  no-unescaped-entities.grit
-  no-unknown-property.grit
-  no-unstable-nested-components.grit
-  no-will-update-set-state.grit
-  prefer-es6-class.grit
-  prefer-read-only-props.grit
-  prefer-stateless-function.grit
-  react-in-jsx-scope.grit
-  require-optimization.grit
-  require-render-return.grit
-  self-closing-comp.grit
-  state-in-constructor.grit
-  static-property-placement.grit
-  style-prop-object.grit
-  void-dom-elements-no-children.grit
+package.json          # Already exists in the base project (includes @biomejs/biome)
+biome.json            # You create this — see Section 4
+plugins/              # You create this directory
+  <rule-name>.grit    # One file per rule — add incrementally
 ```
+
+The 71 rules to implement (each becomes `plugins/<name>.grit`):
+
+`async-server-action`, `button-has-type`, `checked-requires-onchange-or-readonly`, `destructuring-assignment`, `display-name`, `forbid-component-props`, `forbid-foreign-prop-types`, `forbid-prop-types`, `forward-ref-uses-ref`, `hook-use-state`, `iframe-missing-sandbox`, `jsx-boolean-value`, `jsx-child-element-spacing`, `jsx-curly-brace-presence`, `jsx-curly-spacing`, `jsx-equals-spacing`, `jsx-handler-names`, `jsx-key`, `jsx-newline`, `jsx-no-bind`, `jsx-no-comment-textnodes`, `jsx-no-constructed-context-values`, `jsx-no-duplicate-props`, `jsx-no-leaked-render`, `jsx-no-literals`, `jsx-no-script-url`, `jsx-no-target-blank`, `jsx-no-useless-fragment`, `jsx-pascal-case`, `jsx-props-no-multi-spaces`, `jsx-props-no-spread-multi`, `jsx-props-no-spreading`, `jsx-space-before-closing`, `jsx-wrap-multilines`, `no-access-state-in-setstate`, `no-adjacent-inline-elements`, `no-array-index-key`, `no-arrow-function-lifecycle`, `no-children-prop`, `no-danger`, `no-danger-with-children`, `no-deprecated`, `no-did-mount-set-state`, `no-did-update-set-state`, `no-direct-mutation-state`, `no-find-dom-node`, `no-invalid-html-attribute`, `no-is-mounted`, `no-multi-comp`, `no-namespace`, `no-object-type-as-default-prop`, `no-redundant-should-component-update`, `no-render-return-value`, `no-set-state`, `no-this-in-sfc`, `no-typos`, `no-unescaped-entities`, `no-unknown-property`, `no-unstable-nested-components`, `no-will-update-set-state`, `prefer-es6-class`, `prefer-read-only-props`, `prefer-stateless-function`, `react-in-jsx-scope`, `require-optimization`, `require-render-return`, `self-closing-comp`, `state-in-constructor`, `static-property-placement`, `style-prop-object`, `void-dom-elements-no-children`
 
 ### `package.json`
 
+The base project already includes `@biomejs/biome`. Do **not** overwrite `package.json`. If biome is not installed, add it:
+
+```sh
+npm install --save-dev @biomejs/biome@2.4.4
+```
+
+## 4. `biome.json` Configuration
+
+**Create `biome.json` before doing anything else.** This is critical — without it, biome uses all built-in recommended rules, which will fire on your code and produce confusing diagnostics unrelated to your plugins.
+
+Start with an empty `plugins` array:
+
 ```json
 {
-  "name": "biome-react-rules",
-  "private": true,
-  "devDependencies": {
-    "@biomejs/biome": "2.4.4"
-  }
+  "$schema": "https://biomejs.dev/schemas/2.4.4/schema.json",
+  "linter": {
+    "rules": {
+      "recommended": false
+    }
+  },
+  "plugins": []
 }
 ```
 
-Run `npm install` after creating it.
+### Adding plugins incrementally
 
-## 4. `biome.json` Configuration
+**Biome validates every file in the `plugins` array on startup.** If any `.grit` file is missing or contains invalid GritQL, `biome lint` fails entirely — no diagnostics, just a plugin loading error. This means you cannot list all 71 plugins upfront.
+
+The workflow for each rule:
+1. Write the `.grit` file in `plugins/`
+2. Add its path to the `plugins` array in `biome.json`
+3. Test with `biome lint` — if the plugin has a syntax error, biome will tell you
+4. Move on to the next rule
+
+Example after implementing three rules:
 
 ```json
 {
@@ -126,85 +82,17 @@ Run `npm install` after creating it.
     }
   },
   "plugins": [
-    "./plugins/async-server-action.grit",
-    "./plugins/button-has-type.grit",
-    "./plugins/checked-requires-onchange-or-readonly.grit",
-    "./plugins/destructuring-assignment.grit",
-    "./plugins/display-name.grit",
-    "./plugins/forbid-component-props.grit",
-    "./plugins/forbid-foreign-prop-types.grit",
-    "./plugins/forbid-prop-types.grit",
-    "./plugins/forward-ref-uses-ref.grit",
-    "./plugins/hook-use-state.grit",
-    "./plugins/iframe-missing-sandbox.grit",
-    "./plugins/jsx-boolean-value.grit",
-    "./plugins/jsx-child-element-spacing.grit",
-    "./plugins/jsx-curly-brace-presence.grit",
-    "./plugins/jsx-curly-spacing.grit",
-    "./plugins/jsx-equals-spacing.grit",
-    "./plugins/jsx-handler-names.grit",
-    "./plugins/jsx-key.grit",
-    "./plugins/jsx-newline.grit",
-    "./plugins/jsx-no-bind.grit",
-    "./plugins/jsx-no-comment-textnodes.grit",
-    "./plugins/jsx-no-constructed-context-values.grit",
-    "./plugins/jsx-no-duplicate-props.grit",
-    "./plugins/jsx-no-leaked-render.grit",
-    "./plugins/jsx-no-literals.grit",
-    "./plugins/jsx-no-script-url.grit",
-    "./plugins/jsx-no-target-blank.grit",
-    "./plugins/jsx-no-useless-fragment.grit",
-    "./plugins/jsx-pascal-case.grit",
-    "./plugins/jsx-props-no-multi-spaces.grit",
-    "./plugins/jsx-props-no-spread-multi.grit",
-    "./plugins/jsx-props-no-spreading.grit",
-    "./plugins/jsx-space-before-closing.grit",
-    "./plugins/jsx-wrap-multilines.grit",
-    "./plugins/no-access-state-in-setstate.grit",
-    "./plugins/no-adjacent-inline-elements.grit",
-    "./plugins/no-array-index-key.grit",
-    "./plugins/no-arrow-function-lifecycle.grit",
-    "./plugins/no-children-prop.grit",
     "./plugins/no-danger.grit",
-    "./plugins/no-danger-with-children.grit",
-    "./plugins/no-deprecated.grit",
-    "./plugins/no-did-mount-set-state.grit",
-    "./plugins/no-did-update-set-state.grit",
-    "./plugins/no-direct-mutation-state.grit",
     "./plugins/no-find-dom-node.grit",
-    "./plugins/no-invalid-html-attribute.grit",
-    "./plugins/no-is-mounted.grit",
-    "./plugins/no-multi-comp.grit",
-    "./plugins/no-namespace.grit",
-    "./plugins/no-object-type-as-default-prop.grit",
-    "./plugins/no-redundant-should-component-update.grit",
-    "./plugins/no-render-return-value.grit",
-    "./plugins/no-set-state.grit",
-    "./plugins/no-this-in-sfc.grit",
-    "./plugins/no-typos.grit",
-    "./plugins/no-unescaped-entities.grit",
-    "./plugins/no-unknown-property.grit",
-    "./plugins/no-unstable-nested-components.grit",
-    "./plugins/no-will-update-set-state.grit",
-    "./plugins/prefer-es6-class.grit",
-    "./plugins/prefer-read-only-props.grit",
-    "./plugins/prefer-stateless-function.grit",
-    "./plugins/react-in-jsx-scope.grit",
-    "./plugins/require-optimization.grit",
-    "./plugins/require-render-return.grit",
-    "./plugins/self-closing-comp.grit",
-    "./plugins/state-in-constructor.grit",
-    "./plugins/static-property-placement.grit",
-    "./plugins/style-prop-object.grit",
-    "./plugins/void-dom-elements-no-children.grit"
+    "./plugins/no-is-mounted.grit"
   ]
 }
 ```
 
 Key points:
-- `"recommended": false` suppresses all built-in Biome lint rules so only your plugins fire
+- `"recommended": false` must be at the path `linter.rules.recommended` (not `linter.recommended` — that is an invalid key and biome will error)
+- This suppresses all built-in Biome lint rules so only your plugins fire
 - Each plugin path is relative to the project root
-- The `$schema` ensures config validation against Biome 2.4.4
 
 ## 5. GritQL Quick Reference
 
