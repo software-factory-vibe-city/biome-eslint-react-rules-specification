@@ -25,10 +25,14 @@ These are your primary references. When a pattern isn't working, re-read the doc
 ## 3. Project Structure
 
 ```
-package.json          # Already exists in the base project (includes @biomejs/biome)
+package.json          # Already exists in the base project (includes @biomejs/biome, vitest)
 biome.json            # You create this — see Section 4
 plugins/              # You create this directory
   <rule-name>.grit    # One file per rule — add incrementally
+src/
+  test-helpers.ts     # Lint utility for tests — see Section 8
+  rules/
+    <rule-name>.test.ts  # One test file per rule
 ```
 
 The 71 rules to implement (each becomes `plugins/<name>.grit`):
@@ -299,46 +303,143 @@ Some messages contain `{{placeholders}}` in their templates. In the test asserti
 
 Since GritQL message strings are static, you may need separate patterns for each concrete value that appears in the test cases, or use the matched node's text if GritQL supports interpolation in the `message` parameter.
 
-## 8. How Testing Works
+## 8. Testing
 
-The test harness validates your plugins by running `biome lint` on code snippets and checking the diagnostics.
+Every rule must have a test file. Write tests as you go — after creating a `.grit` file and adding it to `biome.json`, write its test and run it before moving on.
 
-### Test structure
+### Test helper — `src/test-helpers.ts`
 
-Each rule has its own test file. Inside:
-- `describe("<rule-name>")` — the suite name matches the plugin filename (without `.grit`)
-- `describe("valid")` / `describe("invalid")` — two groups
-- `it("valid[N]: ...")` / `it("invalid[N]: ...")` — individual cases
+Create this file first. It provides a `lint()` function that runs biome on a code snippet and returns parsed diagnostics.
 
-### What the harness does for each test
+```ts
+import { execFile } from "node:child_process";
+import { mkdirSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
+import { promisify } from "node:util";
 
-1. Writes the test code to a temporary `.jsx` file in your project directory
-2. Runs `npx biome lint --reporter=json <file>`
-3. Parses the JSON output for diagnostics
-4. Filters diagnostics to only those matching the rule (by `category` containing the rule name, or by message text)
-5. For **valid** tests: asserts `diagnostics.length === 0`
-6. For **invalid** tests: asserts `diagnostics.length === N` and checks each `message` with `.toBe()`
+const execFileAsync = promisify(execFile);
 
-### Rule matching
+const PROJECT_DIR = resolve(import.meta.dirname, "..");
 
-The harness filters diagnostics by checking if `diagnostic.category` contains the rule name. Biome plugin categories follow the format:
+export interface Diagnostic {
+  message: string;
+  severity: string;
+  category?: string;
+}
 
+/**
+ * Lint a code snippet by writing it to a temp file, running biome, and
+ * parsing the JSON output. Returns all diagnostics for the file.
+ */
+export async function lint(code: string, filename = "test.jsx"): Promise<Diagnostic[]> {
+  const fixturesDir = join(PROJECT_DIR, "__test_fixtures__");
+  mkdirSync(fixturesDir, { recursive: true });
+
+  const filePath = join(fixturesDir, filename);
+  writeFileSync(filePath, code, "utf-8");
+
+  try {
+    const biome = join(PROJECT_DIR, "node_modules", ".bin", "biome");
+    const { stdout } = await execFileAsync(
+      biome,
+      ["lint", "--reporter=json", filePath],
+      { cwd: PROJECT_DIR, timeout: 30_000 }
+    ).catch((error: any) => {
+      if (error.stdout) return { stdout: error.stdout as string };
+      throw error;
+    });
+
+    return parseDiagnostics(stdout);
+  } finally {
+    try { unlinkSync(filePath); } catch {}
+  }
+}
+
+/**
+ * Filter diagnostics to only those from a specific plugin rule.
+ * Biome plugin categories look like "lint/plugin/<rule-name>".
+ */
+export function ruleDiagnostics(diagnostics: Diagnostic[], ruleName: string): Diagnostic[] {
+  return diagnostics.filter((d) => d.category?.includes(ruleName));
+}
+
+function parseDiagnostics(stdout: string): Diagnostic[] {
+  if (!stdout.trim()) return [];
+  let parsed: any;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return [];
+  }
+
+  const items = Array.isArray(parsed) ? parsed : parsed.diagnostics ?? [];
+  return items.map((item: any) => ({
+    message: typeof item.description === "string"
+      ? item.description
+      : Array.isArray(item.description)
+        ? item.description.map((p: any) => typeof p === "string" ? p : p.content ?? "").join("")
+        : String(item.description ?? ""),
+    severity: item.severity ?? "error",
+    category: item.category,
+  }));
+}
 ```
-lint/plugin/<filename-without-extension>
+
+### Test file structure
+
+Each rule gets a test file at `src/rules/<rule-name>.test.ts`:
+
+```ts
+import { describe, it, expect } from "vitest";
+import { lint, ruleDiagnostics } from "../test-helpers.ts";
+
+describe("no-danger", () => {
+  describe("valid", () => {
+    it("allows dangerouslySetInnerHTML on components", async () => {
+      const diags = await lint(`<App dangerouslySetInnerHTML={{ __html: "" }} />;`);
+      expect(ruleDiagnostics(diags, "no-danger")).toHaveLength(0);
+    });
+  });
+
+  describe("invalid", () => {
+    it("reports dangerouslySetInnerHTML on DOM elements", async () => {
+      const diags = await lint(`<div dangerouslySetInnerHTML={{ __html: "" }}></div>;`);
+      const errors = ruleDiagnostics(diags, "no-danger");
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toBe("Dangerous property 'dangerouslySetInnerHTML' found");
+    });
+  });
+});
 ```
 
-So `plugins/no-danger.grit` produces diagnostics with category `lint/plugin/no-danger`. This is automatic — you don't configure it.
+### Key patterns
 
-### Reading failure reports
+- **`lint(code)`** writes the snippet to a temp `.jsx` file, runs `biome lint --reporter=json`, and returns all diagnostics
+- **`ruleDiagnostics(diags, "rule-name")`** filters to diagnostics from your plugin (category `lint/plugin/rule-name`)
+- **Valid cases**: assert `toHaveLength(0)` — the rule should not fire
+- **Invalid cases**: assert the expected count AND check each message with `.toBe()`
+- Use `lint(code, "test.tsx")` for test cases that require TypeScript syntax
 
-When a test fails, the report includes:
-- `name`: Full test path (e.g., `"no-danger > invalid > invalid[0]: <div dangerously..."`)
-- `status`: `"failed"`
-- `details`: The assertion error (expected vs. received)
-- `source`: The source code that was tested
-- `explanation`: Full context including expected diagnostic count and messages
+### Running tests
 
-Use the `explanation` to understand what your plugin should produce for that input.
+```sh
+npx vitest run
+```
+
+Or run a single rule's tests:
+
+```sh
+npx vitest run src/rules/no-danger.test.ts
+```
+
+### Workflow
+
+For each rule:
+1. Write `plugins/<rule-name>.grit`
+2. Add `"./plugins/<rule-name>.grit"` to the `plugins` array in `biome.json`
+3. Write `src/rules/<rule-name>.test.ts` with valid and invalid cases
+4. Run `npx vitest run src/rules/<rule-name>.test.ts`
+5. Fix the plugin until tests pass, then move on
 
 ## 9. Constraints and Tips
 
