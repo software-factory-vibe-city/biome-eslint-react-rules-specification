@@ -4,7 +4,7 @@
 
 Build a Biome linter project where React linting rules from `eslint-plugin-react` are implemented as **GritQL plugins**. Each rule is a single `.grit` file in a `plugins/` directory. Biome runs these plugins via its native GritQL plugin system — no custom code, no JavaScript, just pattern files and configuration.
 
-There are **77 rules** total. Each one:
+There are **71 rules** total. Each one:
 - Lives at `plugins/<rule-name>.grit`
 - Is registered in `biome.json`
 - Produces diagnostics with **exact message strings** (the test harness checks with `.toBe()`)
@@ -29,17 +29,14 @@ package.json
 biome.json
 plugins/
   async-server-action.grit
-  boolean-prop-naming.grit
   button-has-type.grit
   checked-requires-onchange-or-readonly.grit
   destructuring-assignment.grit
   display-name.grit
   forbid-component-props.grit
-  forbid-elements.grit
   forbid-foreign-prop-types.grit
   forbid-prop-types.grit
   forward-ref-uses-ref.grit
-  function-component-definition.grit
   hook-use-state.grit
   iframe-missing-sandbox.grit
   jsx-boolean-value.grit
@@ -64,7 +61,6 @@ plugins/
   jsx-props-no-spread-multi.grit
   jsx-props-no-spreading.grit
   jsx-space-before-closing.grit
-  jsx-tag-spacing.grit
   jsx-wrap-multilines.grit
   no-access-state-in-setstate.grit
   no-adjacent-inline-elements.grit
@@ -86,7 +82,6 @@ plugins/
   no-redundant-should-component-update.grit
   no-render-return-value.grit
   no-set-state.grit
-  no-string-refs.grit
   no-this-in-sfc.grit
   no-typos.grit
   no-unescaped-entities.grit
@@ -94,7 +89,6 @@ plugins/
   no-unstable-nested-components.grit
   no-will-update-set-state.grit
   prefer-es6-class.grit
-  prefer-exact-props.grit
   prefer-read-only-props.grit
   prefer-stateless-function.grit
   react-in-jsx-scope.grit
@@ -133,17 +127,14 @@ Run `npm install` after creating it.
   },
   "plugins": [
     "./plugins/async-server-action.grit",
-    "./plugins/boolean-prop-naming.grit",
     "./plugins/button-has-type.grit",
     "./plugins/checked-requires-onchange-or-readonly.grit",
     "./plugins/destructuring-assignment.grit",
     "./plugins/display-name.grit",
     "./plugins/forbid-component-props.grit",
-    "./plugins/forbid-elements.grit",
     "./plugins/forbid-foreign-prop-types.grit",
     "./plugins/forbid-prop-types.grit",
     "./plugins/forward-ref-uses-ref.grit",
-    "./plugins/function-component-definition.grit",
     "./plugins/hook-use-state.grit",
     "./plugins/iframe-missing-sandbox.grit",
     "./plugins/jsx-boolean-value.grit",
@@ -168,7 +159,6 @@ Run `npm install` after creating it.
     "./plugins/jsx-props-no-spread-multi.grit",
     "./plugins/jsx-props-no-spreading.grit",
     "./plugins/jsx-space-before-closing.grit",
-    "./plugins/jsx-tag-spacing.grit",
     "./plugins/jsx-wrap-multilines.grit",
     "./plugins/no-access-state-in-setstate.grit",
     "./plugins/no-adjacent-inline-elements.grit",
@@ -190,7 +180,6 @@ Run `npm install` after creating it.
     "./plugins/no-redundant-should-component-update.grit",
     "./plugins/no-render-return-value.grit",
     "./plugins/no-set-state.grit",
-    "./plugins/no-string-refs.grit",
     "./plugins/no-this-in-sfc.grit",
     "./plugins/no-typos.grit",
     "./plugins/no-unescaped-entities.grit",
@@ -198,7 +187,6 @@ Run `npm install` after creating it.
     "./plugins/no-unstable-nested-components.grit",
     "./plugins/no-will-update-set-state.grit",
     "./plugins/prefer-es6-class.grit",
-    "./plugins/prefer-exact-props.grit",
     "./plugins/prefer-read-only-props.grit",
     "./plugins/prefer-stateless-function.grit",
     "./plugins/react-in-jsx-scope.grit",
@@ -488,7 +476,7 @@ Use the `explanation` to understand what your plugin should produce for that inp
 Work through rules in order of pattern complexity. Earlier rules build intuition for later ones.
 
 **Start here — simple attribute/element detection:**
-`no-danger`, `no-find-dom-node`, `no-is-mounted`, `no-render-return-value`, `no-string-refs`, `no-children-prop`, `jsx-no-duplicate-props`, `jsx-no-script-url`, `self-closing-comp`, `void-dom-elements-no-children`, `no-danger-with-children`, `iframe-missing-sandbox`
+`no-danger`, `no-find-dom-node`, `no-is-mounted`, `no-render-return-value`, `no-children-prop`, `jsx-no-duplicate-props`, `jsx-no-script-url`, `self-closing-comp`, `void-dom-elements-no-children`, `no-danger-with-children`, `iframe-missing-sandbox`
 
 **Then — attribute validation and element-specific logic:**
 `button-has-type`, `jsx-no-target-blank`, `jsx-boolean-value`, `jsx-curly-brace-presence`, `jsx-key`, `jsx-props-no-spreading`, `jsx-no-comment-textnodes`, `no-unescaped-entities`, `style-prop-object`, `checked-requires-onchange-or-readonly`, `no-namespace`, `jsx-handler-names`, `no-adjacent-inline-elements`
@@ -497,4 +485,4 @@ Work through rules in order of pattern complexity. Earlier rules build intuition
 `no-direct-mutation-state`, `no-access-state-in-setstate`, `no-set-state`, `no-did-mount-set-state`, `no-did-update-set-state`, `no-will-update-set-state`, `no-this-in-sfc`, `no-array-index-key`, `jsx-no-bind`, `jsx-no-constructed-context-values`, `no-unstable-nested-components`, `jsx-no-leaked-render`, `react-in-jsx-scope`, `jsx-pascal-case`, `no-multi-comp`, `no-deprecated`, `no-arrow-function-lifecycle`, `jsx-no-useless-fragment`
 
 **Finally — harder patterns requiring creative use of GritQL:**
-`display-name`, `require-render-return`, `prefer-es6-class`, `no-redundant-should-component-update`, `require-optimization`, `state-in-constructor`, `static-property-placement`, `destructuring-assignment`, `function-component-definition`, `hook-use-state`, `forward-ref-uses-ref`, `no-typos`, `forbid-prop-types`, `forbid-component-props`, `forbid-elements`, `forbid-foreign-prop-types`, `no-object-type-as-default-prop`, `prefer-exact-props`, `prefer-read-only-props`, `boolean-prop-naming`, `no-invalid-html-attribute`, `no-unknown-property`, `async-server-action`, `prefer-stateless-function`, `jsx-no-literals`, `jsx-curly-spacing`, `jsx-equals-spacing`, `jsx-space-before-closing`, `jsx-tag-spacing`, `jsx-wrap-multilines`, `jsx-newline`, `jsx-props-no-multi-spaces`, `jsx-props-no-spread-multi`, `jsx-child-element-spacing`
+`display-name`, `require-render-return`, `prefer-es6-class`, `no-redundant-should-component-update`, `require-optimization`, `state-in-constructor`, `static-property-placement`, `destructuring-assignment`, `hook-use-state`, `forward-ref-uses-ref`, `no-typos`, `forbid-prop-types`, `forbid-component-props`, `forbid-foreign-prop-types`, `no-object-type-as-default-prop`, `prefer-read-only-props`, `no-invalid-html-attribute`, `no-unknown-property`, `async-server-action`, `prefer-stateless-function`, `jsx-no-literals`, `jsx-curly-spacing`, `jsx-equals-spacing`, `jsx-space-before-closing`, `jsx-wrap-multilines`, `jsx-newline`, `jsx-props-no-multi-spaces`, `jsx-props-no-spread-multi`, `jsx-child-element-spacing`

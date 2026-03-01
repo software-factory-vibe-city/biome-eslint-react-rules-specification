@@ -1,9 +1,33 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, writeFileSync, unlinkSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Resolve the biome binary path once, avoiding `npx` overhead on every call.
+ * Falls back to `npx biome` if the binary can't be found directly.
+ */
+let _biomeBin: { cmd: string; args: string[] } | undefined;
+function getBiomeBin(projectDir: string): { cmd: string; args: string[] } {
+  if (_biomeBin) return _biomeBin;
+
+  const candidates = [
+    join(projectDir, "node_modules", ".bin", "biome"),
+    join(projectDir, "node_modules", "@biomejs", "biome", "bin", "biome"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      _biomeBin = { cmd: candidate, args: [] };
+      return _biomeBin;
+    }
+  }
+
+  _biomeBin = { cmd: "npx", args: ["biome"] };
+  return _biomeBin;
+}
 
 export interface Diagnostic {
   message: string;
@@ -15,53 +39,90 @@ export interface Diagnostic {
 
 const FIXTURES_DIR = "__test_fixtures__";
 
-/**
- * Write code to a temp file in projectDir, run biome lint --reporter=json,
- * parse output, clean up temp file.
- */
-export async function lint(
-  projectDir: string,
-  code: string,
-  filename: string = "test.jsx"
-): Promise<Diagnostic[]> {
-  const fixturesDir = join(projectDir, FIXTURES_DIR);
-  const filePath = join(fixturesDir, filename);
+export interface BatchInput {
+  code: string;
+  filename: string;
+}
 
-  // Ensure fixtures directory exists
+/**
+ * Lint multiple code snippets in a single biome invocation.
+ * Writes all files with unique names, runs biome once, returns
+ * per-file diagnostics in the same order as the input.
+ */
+export async function batchLint(
+  projectDir: string,
+  cases: BatchInput[]
+): Promise<Diagnostic[][]> {
+  if (cases.length === 0) return [];
+
+  const fixturesDir = join(projectDir, FIXTURES_DIR);
   mkdirSync(fixturesDir, { recursive: true });
 
-  // Write temp file
-  writeFileSync(filePath, code, "utf-8");
+  // Write all fixture files with unique names
+  const filePaths: string[] = [];
+  for (let i = 0; i < cases.length; i++) {
+    const ext = cases[i].filename.endsWith(".tsx") ? ".tsx" : ".jsx";
+    const uniqueName = `case_${i}${ext}`;
+    const filePath = join(fixturesDir, uniqueName);
+    writeFileSync(filePath, cases[i].code, "utf-8");
+    filePaths.push(filePath);
+  }
 
   try {
-    // Run biome lint with JSON reporter
-    // biome lint exits non-zero when it finds lint errors, so we need to
-    // handle that as a normal case
+    const biome = getBiomeBin(projectDir);
     const { stdout } = await execFileAsync(
-      "npx",
-      ["biome", "lint", "--reporter=json", filePath],
+      biome.cmd,
+      [...biome.args, "lint", "--reporter=json", ...filePaths],
       {
         cwd: projectDir,
-        timeout: 30_000,
-        maxBuffer: 10 * 1024 * 1024,
+        timeout: 60_000,
+        maxBuffer: 50 * 1024 * 1024,
       }
     ).catch((error: any) => {
-      // biome exits with non-zero on lint errors — that's expected
       if (error.stdout) {
         return { stdout: error.stdout as string, stderr: error.stderr as string };
       }
       throw error;
     });
 
-    return parseBiomeDiagnostics(stdout);
+    const allDiags = parseBiomeDiagnostics(stdout);
+
+    // Map diagnostics back to each input by filename
+    const fileMap = new Map<string, number>();
+    for (let i = 0; i < filePaths.length; i++) {
+      fileMap.set(basename(filePaths[i]), i);
+    }
+
+    const results: Diagnostic[][] = filePaths.map(() => []);
+    for (const diag of allDiags) {
+      if (diag.file) {
+        const name = basename(diag.file);
+        const idx = fileMap.get(name);
+        if (idx !== undefined) {
+          results[idx].push(diag);
+        }
+      }
+    }
+
+    return results;
   } finally {
-    // Clean up temp file
-    try {
-      unlinkSync(filePath);
-    } catch {
-      // Ignore cleanup errors
+    for (const fp of filePaths) {
+      try { unlinkSync(fp); } catch {}
     }
   }
+}
+
+/**
+ * Lint a single code snippet. Spawns one biome process per call —
+ * prefer batchLint() when testing multiple snippets.
+ */
+export async function lint(
+  projectDir: string,
+  code: string,
+  filename: string = "test.jsx"
+): Promise<Diagnostic[]> {
+  const results = await batchLint(projectDir, [{ code, filename }]);
+  return results[0] ?? [];
 }
 
 /**

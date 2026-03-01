@@ -4,6 +4,81 @@ import { extractAll, type ExtractedRule, type ExtractedTestCase } from "./extrac
 
 // ---- Configuration ----
 
+/** Rules deemed feasible to implement as Biome GritQL plugins. */
+const ALLOWED_RULES = new Set([
+  "async-server-action",
+  "button-has-type",
+  "checked-requires-onchange-or-readonly",
+  "destructuring-assignment",
+  "display-name",
+  "forbid-component-props",
+  "forbid-foreign-prop-types",
+  "forbid-prop-types",
+  "forward-ref-uses-ref",
+  "hook-use-state",
+  "iframe-missing-sandbox",
+  "jsx-boolean-value",
+  "jsx-child-element-spacing",
+  "jsx-curly-brace-presence",
+  "jsx-curly-spacing",
+  "jsx-equals-spacing",
+  "jsx-handler-names",
+  "jsx-key",
+  "jsx-newline",
+  "jsx-no-bind",
+  "jsx-no-comment-textnodes",
+  "jsx-no-constructed-context-values",
+  "jsx-no-duplicate-props",
+  "jsx-no-leaked-render",
+  "jsx-no-literals",
+  "jsx-no-script-url",
+  "jsx-no-target-blank",
+  "jsx-no-useless-fragment",
+  "jsx-pascal-case",
+  "jsx-props-no-multi-spaces",
+  "jsx-props-no-spread-multi",
+  "jsx-props-no-spreading",
+  "jsx-space-before-closing",
+  "jsx-wrap-multilines",
+  "no-access-state-in-setstate",
+  "no-adjacent-inline-elements",
+  "no-array-index-key",
+  "no-arrow-function-lifecycle",
+  "no-children-prop",
+  "no-danger",
+  "no-danger-with-children",
+  "no-deprecated",
+  "no-did-mount-set-state",
+  "no-did-update-set-state",
+  "no-direct-mutation-state",
+  "no-find-dom-node",
+  "no-invalid-html-attribute",
+  "no-is-mounted",
+  "no-multi-comp",
+  "no-namespace",
+  "no-object-type-as-default-prop",
+  "no-redundant-should-component-update",
+  "no-render-return-value",
+  "no-set-state",
+  "no-this-in-sfc",
+  "no-typos",
+  "no-unescaped-entities",
+  "no-unknown-property",
+  "no-unstable-nested-components",
+  "no-will-update-set-state",
+  "prefer-es6-class",
+  "prefer-read-only-props",
+  "prefer-stateless-function",
+  "react-in-jsx-scope",
+  "require-optimization",
+  "require-render-return",
+  "self-closing-comp",
+  "state-in-constructor",
+  "static-property-placement",
+  "style-prop-object",
+  "void-dom-elements-no-children",
+]);
+
 const INCLUDE_FEATURES = new Set([
   "ts",
   "types",
@@ -149,12 +224,16 @@ function generateTestFile(rule: ExtractedRule): string {
 
   const lines: string[] = [];
 
-  lines.push(`import { describe, it, expect } from "vitest";`);
-  lines.push(`import { lint, ruleErrors } from "../utils.ts";`);
+  lines.push(`import { describe, it, expect, beforeAll } from "vitest";`);
+  lines.push(`import { batchLint, ruleErrors, type Diagnostic } from "../utils.ts";`);
   lines.push(``);
   lines.push(
     `const PROJECT_DIR = process.env["PROJECT_DIR"] ?? process.cwd();`
   );
+  lines.push(``);
+
+  lines.push(`const RULE_NAME = ${JSON.stringify(rule.name)};`);
+  lines.push(`const VALID_COUNT = ${validCases.length};`);
   lines.push(``);
 
   // RULE_MESSAGES array
@@ -165,31 +244,54 @@ function generateTestFile(rule: ExtractedRule): string {
   lines.push(`];`);
   lines.push(``);
 
-  lines.push(`describe(${JSON.stringify(rule.name)}, () => {`);
+  // Emit all cases as data arrays
+  const allCases = [...validCases, ...invalidCases];
 
-  // Valid cases
+  lines.push(`const cases = [`);
+  for (const testCase of allCases) {
+    const filename = getFilename(testCase);
+    const escapedCode = escapeTemplateLiteral(testCase.code);
+    lines.push(`  { code: \`${escapedCode}\`, filename: ${JSON.stringify(filename)} },`);
+  }
+  lines.push(`];`);
+  lines.push(``);
+
+  lines.push(`describe(${JSON.stringify(rule.name)}, () => {`);
+  lines.push(`  let results: Diagnostic[][];`);
+  lines.push(`  let ruleActive = false;`);
+  lines.push(``);
+  lines.push(`  beforeAll(async () => {`);
+  lines.push(`    results = await batchLint(PROJECT_DIR, cases);`);
+  lines.push(``);
+  lines.push(`    // Check if the rule is active — at least one invalid case must fire`);
+  lines.push(`    const invalidResults = results.slice(VALID_COUNT);`);
+  lines.push(`    ruleActive = invalidResults.some(`);
+  lines.push(`      (diags) => ruleErrors(diags, RULE_NAME, RULE_MESSAGES).length > 0`);
+  lines.push(`    );`);
+  lines.push(`  });`);
+  lines.push(``);
+
+  // Valid cases — indices [0, validCases.length)
   if (validCases.length > 0) {
     lines.push(`  describe("valid", () => {`);
-    for (const testCase of validCases) {
+    for (let ci = 0; ci < validCases.length; ci++) {
+      const testCase = validCases[ci];
       const testName = escapeTestName(
         `valid[${testCase.originalIndex}]: ${truncate(testCase.code, 60)}`
       );
-      const filename = getFilename(testCase);
       const escapedCode = escapeTemplateLiteral(testCase.code);
 
       lines.push(
-        `    it("${testName}", async ({ task }) => {`
+        `    it("${testName}", ({ task }) => {`
       );
       lines.push(`      const code = \`${escapedCode}\`;`);
       lines.push(`      task.meta.source = code;`);
       lines.push(
         `      task.meta.explanation = ${JSON.stringify(buildExplanation(rule, testCase))};`
       );
+      lines.push(`      expect(ruleActive, \`Rule "\${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?\`).toBe(true);`);
       lines.push(
-        `      const diags = await lint(PROJECT_DIR, code, ${JSON.stringify(filename)});`
-      );
-      lines.push(
-        `      const matches = ruleErrors(diags, ${JSON.stringify(rule.name)}, RULE_MESSAGES);`
+        `      const matches = ruleErrors(results[${ci}], RULE_NAME, RULE_MESSAGES);`
       );
       lines.push(`      expect(matches).toHaveLength(0);`);
       lines.push(`    });`);
@@ -199,19 +301,20 @@ function generateTestFile(rule: ExtractedRule): string {
     lines.push(``);
   }
 
-  // Invalid cases
+  // Invalid cases — indices [validCases.length, allCases.length)
   if (invalidCases.length > 0) {
+    const offset = validCases.length;
     lines.push(`  describe("invalid", () => {`);
-    for (const testCase of invalidCases) {
+    for (let ci = 0; ci < invalidCases.length; ci++) {
+      const testCase = invalidCases[ci];
       const errors = testCase.errors ?? [];
       const testName = escapeTestName(
         `invalid[${testCase.originalIndex}]: ${truncate(testCase.code, 60)}`
       );
-      const filename = getFilename(testCase);
       const escapedCode = escapeTemplateLiteral(testCase.code);
 
       lines.push(
-        `    it("${testName}", async ({ task }) => {`
+        `    it("${testName}", ({ task }) => {`
       );
       lines.push(`      const code = \`${escapedCode}\`;`);
       lines.push(`      task.meta.source = code;`);
@@ -219,10 +322,7 @@ function generateTestFile(rule: ExtractedRule): string {
         `      task.meta.explanation = ${JSON.stringify(buildExplanation(rule, testCase))};`
       );
       lines.push(
-        `      const diags = await lint(PROJECT_DIR, code, ${JSON.stringify(filename)});`
-      );
-      lines.push(
-        `      const matches = ruleErrors(diags, ${JSON.stringify(rule.name)}, RULE_MESSAGES);`
+        `      const matches = ruleErrors(results[${offset + ci}], RULE_NAME, RULE_MESSAGES);`
       );
       lines.push(`      expect(matches).toHaveLength(${errors.length});`);
 
@@ -282,7 +382,15 @@ function main() {
   let totalValidCases = 0;
   let totalInvalidCases = 0;
 
+  let totalSkippedRules = 0;
+
   for (const rule of rules) {
+    // Only generate tests for rules deemed feasible
+    if (!ALLOWED_RULES.has(rule.name)) {
+      totalSkippedRules++;
+      continue;
+    }
+
     const validIncluded = rule.valid.filter((c) => !shouldSkip(c));
     const invalidIncluded = rule.invalid.filter((c) => !shouldSkip(c));
     const validSkipped = rule.valid.length - validIncluded.length;
@@ -319,7 +427,10 @@ function main() {
     `Test cases: ${totalValidCases} valid, ${totalInvalidCases} invalid`
   );
   console.log(
-    `Skipped: ${totalSkippedValid} valid, ${totalSkippedInvalid} invalid`
+    `Skipped cases: ${totalSkippedValid} valid, ${totalSkippedInvalid} invalid`
+  );
+  console.log(
+    `Skipped rules (not in allowlist): ${totalSkippedRules}`
   );
 }
 

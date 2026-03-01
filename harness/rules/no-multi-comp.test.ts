@@ -1,15 +1,192 @@
-import { describe, it, expect } from "vitest";
-import { lint, ruleErrors } from "../utils.ts";
+import { describe, it, expect, beforeAll } from "vitest";
+import { batchLint, ruleErrors, type Diagnostic } from "../utils.ts";
 
 const PROJECT_DIR = process.env["PROJECT_DIR"] ?? process.cwd();
+
+const RULE_NAME = "no-multi-comp";
+const VALID_COUNT = 7;
 
 const RULE_MESSAGES = [
   "Declare only one React component per file",
 ];
 
+const cases = [
+  { code: `
+        var Hello = require('./components/Hello');
+        var HelloJohn = createReactClass({
+          render: function() {
+            return <Hello name="John" />;
+          }
+        });
+      `, filename: "test.jsx" },
+  { code: `
+        class Hello extends React.Component {
+          render() {
+            return <div>Hello {this.props.name}</div>;
+          }
+        }
+      `, filename: "test.jsx" },
+  { code: `
+        var Heading = createReactClass({
+          render: function() {
+            return (
+              <div>
+                {this.props.buttons.map(function(button, index) {
+                  return <Button {...button} key={index}/>;
+                })}
+              </div>
+            );
+          }
+        });
+      `, filename: "test.jsx" },
+  { code: `
+        import React, { createElement } from "react"
+        const helperFoo = () => {
+          return true;
+        };
+        function helperBar() {
+          return false;
+        };
+        function RealComponent() {
+          return createElement("img");
+        };
+      `, filename: "test.jsx" },
+  { code: `
+        import React from 'react';
+        function memo() {
+          var outOfScope = "hello"
+          return null;
+        }
+        class ComponentY extends React.Component {
+          memoCities = memo((cities) => cities.map((v) => ({ label: v })));
+          render() {
+            return (
+              <div>
+                <div>Counter</div>
+              </div>
+            );
+          }
+        }
+      `, filename: "test.jsx" },
+  { code: `
+        const MenuList = forwardRef(({onClose, ...props}, ref) => {
+          const {t} = useTranslation();
+          const handleLogout = useLogoutHandler();
+
+          const onLogout = useCallback(() => {
+            onClose();
+            handleLogout();
+          }, [onClose, handleLogout]);
+
+          return (
+            <MuiMenuList ref={ref} {...props}>
+              <MuiMenuItem key="logout" onClick={onLogout}>
+                {t('global-logout')}
+              </MuiMenuItem>
+            </MuiMenuList>
+          );
+        });
+
+        MenuList.displayName = 'MenuList';
+
+        MenuList.propTypes = {
+          onClose: PropTypes.func,
+        };
+
+        MenuList.defaultProps = {
+          onClose: () => null,
+        };
+
+        export default MenuList;
+      `, filename: "test.jsx" },
+  { code: `
+        const MenuList = forwardRef(({ onClose, ...props }, ref) => {
+          const onLogout = useCallback(() => {
+            onClose()
+          }, [onClose])
+
+          return (
+            <BlnMenuList ref={ref} {...props}>
+              <BlnMenuItem key="logout" onClick={onLogout}>
+                Logout
+              </BlnMenuItem>
+            </BlnMenuList>
+          )
+        })
+
+        MenuList.displayName = 'MenuList'
+
+        MenuList.propTypes = {
+          onClose: PropTypes.func
+        }
+
+        MenuList.defaultProps = {
+          onClose: () => null
+        }
+
+        export default MenuList
+      `, filename: "test.jsx" },
+  { code: `        var Hello = createReactClass({          render: function() {            return <div>Hello {this.props.name}</div>;          }        });        var HelloJohn = createReactClass({          render: function() {            return <Hello name="John" />;          }        });      `, filename: "test.jsx" },
+  { code: `        class Hello extends React.Component {          render() {            return <div>Hello {this.props.name}</div>;          }        }        class HelloJohn extends React.Component {          render() {            return <Hello name="John" />;          }        }        class HelloJohnny extends React.Component {          render() {            return <Hello name="Johnny" />;          }        }      `, filename: "test.jsx" },
+  { code: `
+        function Hello(props) {
+          return <div>Hello {props.name}</div>;
+        }
+        function HelloAgain(props) {
+          return <div>Hello again {props.name}</div>;
+        }
+      `, filename: "test.jsx" },
+  { code: `
+        function Hello(props) {
+          return <div>Hello {props.name}</div>;
+        }
+        class HelloJohn extends React.Component {
+          render() {
+            return <Hello name="John" />;
+          }
+        }
+      `, filename: "test.jsx" },
+  { code: `
+        export default {
+          RenderHello(props) {
+            let {name} = props;
+            return <div>{name}</div>;
+          },
+          RenderHello2(props) {
+            let {name} = props;
+            return <div>{name}</div>;
+          }
+        };
+      `, filename: "test.jsx" },
+  { code: `
+        exports.Foo = function Foo() {
+          return <></>
+        }
+
+        exports.createSomeComponent = function createSomeComponent(opts) {
+          return function Foo() {
+            return <>{opts.a}</>
+          }
+        }
+      `, filename: "test.jsx" },
+];
+
 describe("no-multi-comp", () => {
+  let results: Diagnostic[][];
+  let ruleActive = false;
+
+  beforeAll(async () => {
+    results = await batchLint(PROJECT_DIR, cases);
+
+    // Check if the rule is active — at least one invalid case must fire
+    const invalidResults = results.slice(VALID_COUNT);
+    ruleActive = invalidResults.some(
+      (diags) => ruleErrors(diags, RULE_NAME, RULE_MESSAGES).length > 0
+    );
+  });
+
   describe("valid", () => {
-    it("valid[0]: var Hello = require('./components/Hello'); var HelloJohn ...", async ({ task }) => {
+    it("valid[0]: var Hello = require('./components/Hello'); var HelloJohn ...", ({ task }) => {
       const code = `
         var Hello = require('./components/Hello');
         var HelloJohn = createReactClass({
@@ -20,12 +197,12 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: valid (index 0)\n\n--- Source code under test ---\n\n        var Hello = require('./components/Hello');\n        var HelloJohn = createReactClass({\n          render: function() {\n            return <Hello name=\"John\" />;\n          }\n        });\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[0], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[1]: class Hello extends React.Component { render() { return <...", async ({ task }) => {
+    it("valid[1]: class Hello extends React.Component { render() { return <...", ({ task }) => {
       const code = `
         class Hello extends React.Component {
           render() {
@@ -35,12 +212,12 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: valid (index 1)\n\n--- Source code under test ---\n\n        class Hello extends React.Component {\n          render() {\n            return <div>Hello {this.props.name}</div>;\n          }\n        }\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[1], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[2]: var Heading = createReactClass({ render: function() { ret...", async ({ task }) => {
+    it("valid[2]: var Heading = createReactClass({ render: function() { ret...", ({ task }) => {
       const code = `
         var Heading = createReactClass({
           render: function() {
@@ -56,12 +233,12 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: valid (index 2)\n\n--- Source code under test ---\n\n        var Heading = createReactClass({\n          render: function() {\n            return (\n              <div>\n                {this.props.buttons.map(function(button, index) {\n                  return <Button {...button} key={index}/>;\n                })}\n              </div>\n            );\n          }\n        });\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[2], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[5]: import React, { createElement } from \"react\" const helper...", async ({ task }) => {
+    it("valid[5]: import React, { createElement } from \"react\" const helper...", ({ task }) => {
       const code = `
         import React, { createElement } from "react"
         const helperFoo = () => {
@@ -76,12 +253,12 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: valid (index 5)\n\n--- Source code under test ---\n\n        import React, { createElement } from \"react\"\n        const helperFoo = () => {\n          return true;\n        };\n        function helperBar() {\n          return false;\n        };\n        function RealComponent() {\n          return createElement(\"img\");\n        };\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[3], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[13]: import React from 'react'; function memo() { var outOfSco...", async ({ task }) => {
+    it("valid[13]: import React from 'react'; function memo() { var outOfSco...", ({ task }) => {
       const code = `
         import React from 'react';
         function memo() {
@@ -101,12 +278,12 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: valid (index 13)\n\n--- Source code under test ---\n\n        import React from 'react';\n        function memo() {\n          var outOfScope = \"hello\"\n          return null;\n        }\n        class ComponentY extends React.Component {\n          memoCities = memo((cities) => cities.map((v) => ({ label: v })));\n          render() {\n            return (\n              <div>\n                <div>Counter</div>\n              </div>\n            );\n          }\n        }\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nFeatures: class fields\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[4], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[14]: const MenuList = forwardRef(({onClose, ...props}, ref) =>...", async ({ task }) => {
+    it("valid[14]: const MenuList = forwardRef(({onClose, ...props}, ref) =>...", ({ task }) => {
       const code = `
         const MenuList = forwardRef(({onClose, ...props}, ref) => {
           const {t} = useTranslation();
@@ -140,12 +317,12 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: valid (index 14)\n\n--- Source code under test ---\n\n        const MenuList = forwardRef(({onClose, ...props}, ref) => {\n          const {t} = useTranslation();\n          const handleLogout = useLogoutHandler();\n\n          const onLogout = useCallback(() => {\n            onClose();\n            handleLogout();\n          }, [onClose, handleLogout]);\n\n          return (\n            <MuiMenuList ref={ref} {...props}>\n              <MuiMenuItem key=\"logout\" onClick={onLogout}>\n                {t('global-logout')}\n              </MuiMenuItem>\n            </MuiMenuList>\n          );\n        });\n\n        MenuList.displayName = 'MenuList';\n\n        MenuList.propTypes = {\n          onClose: PropTypes.func,\n        };\n\n        MenuList.defaultProps = {\n          onClose: () => null,\n        };\n\n        export default MenuList;\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[5], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[15]: const MenuList = forwardRef(({ onClose, ...props }, ref) ...", async ({ task }) => {
+    it("valid[15]: const MenuList = forwardRef(({ onClose, ...props }, ref) ...", ({ task }) => {
       const code = `
         const MenuList = forwardRef(({ onClose, ...props }, ref) => {
           const onLogout = useCallback(() => {
@@ -175,36 +352,34 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: valid (index 15)\n\n--- Source code under test ---\n\n        const MenuList = forwardRef(({ onClose, ...props }, ref) => {\n          const onLogout = useCallback(() => {\n            onClose()\n          }, [onClose])\n\n          return (\n            <BlnMenuList ref={ref} {...props}>\n              <BlnMenuItem key=\"logout\" onClick={onLogout}>\n                Logout\n              </BlnMenuItem>\n            </BlnMenuList>\n          )\n        })\n\n        MenuList.displayName = 'MenuList'\n\n        MenuList.propTypes = {\n          onClose: PropTypes.func\n        }\n\n        MenuList.defaultProps = {\n          onClose: () => null\n        }\n\n        export default MenuList\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[6], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
   });
 
   describe("invalid", () => {
-    it("invalid[0]: var Hello = createReactClass({ render: function() { retur...", async ({ task }) => {
+    it("invalid[0]: var Hello = createReactClass({ render: function() { retur...", ({ task }) => {
       const code = `        var Hello = createReactClass({          render: function() {            return <div>Hello {this.props.name}</div>;          }        });        var HelloJohn = createReactClass({          render: function() {            return <Hello name="John" />;          }        });      `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: invalid (index 0)\n\n--- Source code under test ---\n\r        var Hello = createReactClass({\r          render: function() {\r            return <div>Hello {this.props.name}</div>;\r          }\r        });\r        var HelloJohn = createReactClass({\r          render: function() {\r            return <Hello name=\"John\" />;\r          }\r        });\r      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: onlyOneComponent): Declare only one React component per file\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      const matches = ruleErrors(results[7], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Declare only one React component per file");
     });
 
-    it("invalid[1]: class Hello extends React.Component { render() { return <...", async ({ task }) => {
+    it("invalid[1]: class Hello extends React.Component { render() { return <...", ({ task }) => {
       const code = `        class Hello extends React.Component {          render() {            return <div>Hello {this.props.name}</div>;          }        }        class HelloJohn extends React.Component {          render() {            return <Hello name="John" />;          }        }        class HelloJohnny extends React.Component {          render() {            return <Hello name="Johnny" />;          }        }      `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: invalid (index 1)\n\n--- Source code under test ---\n\r        class Hello extends React.Component {\r          render() {\r            return <div>Hello {this.props.name}</div>;\r          }\r        }\r        class HelloJohn extends React.Component {\r          render() {\r            return <Hello name=\"John\" />;\r          }\r        }\r        class HelloJohnny extends React.Component {\r          render() {\r            return <Hello name=\"Johnny\" />;\r          }\r        }\r      \n\nThis code is INVALID — the rule should produce 2 diagnostic(s):\n  [0] (messageId: onlyOneComponent): Declare only one React component per file\n  [1] (messageId: onlyOneComponent): Declare only one React component per file\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      const matches = ruleErrors(results[8], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(2);
       expect(matches[0].message).toBe("Declare only one React component per file");
       expect(matches[1].message).toBe("Declare only one React component per file");
     });
 
-    it("invalid[2]: function Hello(props) { return <div>Hello {props.name}</d...", async ({ task }) => {
+    it("invalid[2]: function Hello(props) { return <div>Hello {props.name}</d...", ({ task }) => {
       const code = `
         function Hello(props) {
           return <div>Hello {props.name}</div>;
@@ -215,13 +390,12 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: invalid (index 2)\n\n--- Source code under test ---\n\n        function Hello(props) {\n          return <div>Hello {props.name}</div>;\n        }\n        function HelloAgain(props) {\n          return <div>Hello again {props.name}</div>;\n        }\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: onlyOneComponent): Declare only one React component per file\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      const matches = ruleErrors(results[9], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Declare only one React component per file");
     });
 
-    it("invalid[3]: function Hello(props) { return <div>Hello {props.name}</d...", async ({ task }) => {
+    it("invalid[3]: function Hello(props) { return <div>Hello {props.name}</d...", ({ task }) => {
       const code = `
         function Hello(props) {
           return <div>Hello {props.name}</div>;
@@ -234,13 +408,12 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: invalid (index 3)\n\n--- Source code under test ---\n\n        function Hello(props) {\n          return <div>Hello {props.name}</div>;\n        }\n        class HelloJohn extends React.Component {\n          render() {\n            return <Hello name=\"John\" />;\n          }\n        }\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: onlyOneComponent): Declare only one React component per file\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      const matches = ruleErrors(results[10], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Declare only one React component per file");
     });
 
-    it("invalid[4]: export default { RenderHello(props) { let {name} = props;...", async ({ task }) => {
+    it("invalid[4]: export default { RenderHello(props) { let {name} = props;...", ({ task }) => {
       const code = `
         export default {
           RenderHello(props) {
@@ -255,13 +428,12 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: invalid (index 4)\n\n--- Source code under test ---\n\n        export default {\n          RenderHello(props) {\n            let {name} = props;\n            return <div>{name}</div>;\n          },\n          RenderHello2(props) {\n            let {name} = props;\n            return <div>{name}</div>;\n          }\n        };\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: onlyOneComponent): Declare only one React component per file\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      const matches = ruleErrors(results[11], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Declare only one React component per file");
     });
 
-    it("invalid[5]: exports.Foo = function Foo() { return <></> } exports.cre...", async ({ task }) => {
+    it("invalid[5]: exports.Foo = function Foo() { return <></> } exports.cre...", ({ task }) => {
       const code = `
         exports.Foo = function Foo() {
           return <></>
@@ -275,8 +447,7 @@ describe("no-multi-comp", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-multi-comp\nType: invalid (index 5)\n\n--- Source code under test ---\n\n        exports.Foo = function Foo() {\n          return <></>\n        }\n\n        exports.createSomeComponent = function createSomeComponent(opts) {\n          return function Foo() {\n            return <>{opts.a}</>\n          }\n        }\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: onlyOneComponent): Declare only one React component per file\n\nFeatures: fragment\n\nRule message templates:\n  onlyOneComponent: Declare only one React component per file";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-multi-comp", RULE_MESSAGES);
+      const matches = ruleErrors(results[12], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Declare only one React component per file");
     });

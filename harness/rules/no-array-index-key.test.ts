@@ -1,132 +1,320 @@
-import { describe, it, expect } from "vitest";
-import { lint, ruleErrors } from "../utils.ts";
+import { describe, it, expect, beforeAll } from "vitest";
+import { batchLint, ruleErrors, type Diagnostic } from "../utils.ts";
 
 const PROJECT_DIR = process.env["PROJECT_DIR"] ?? process.cwd();
+
+const RULE_NAME = "no-array-index-key";
+const VALID_COUNT = 30;
 
 const RULE_MESSAGES = [
   "Do not use Array index in keys",
 ];
 
+const cases = [
+  { code: `<Foo key="foo" />;`, filename: "test.jsx" },
+  { code: `<Foo key={i} />;`, filename: "test.jsx" },
+  { code: `<Foo key />;`, filename: "test.jsx" },
+  { code: `<Foo key={\`foo-\${i}\`} />;`, filename: "test.jsx" },
+  { code: `<Foo key={'foo-' + i} />;`, filename: "test.jsx" },
+  { code: `foo.bar((baz, i) => <Foo key={i} />)`, filename: "test.jsx" },
+  { code: `foo.bar((bar, i) => <Foo key={\`foo-\${i}\`} />)`, filename: "test.jsx" },
+  { code: `foo.bar((bar, i) => <Foo key={'foo-' + i} />)`, filename: "test.jsx" },
+  { code: `foo.map((baz) => <Foo key={baz.id} />)`, filename: "test.jsx" },
+  { code: `foo.map((baz, i) => <Foo key={baz.id} />)`, filename: "test.jsx" },
+  { code: `foo.map((baz, i) => <Foo key={'foo' + baz.id} />)`, filename: "test.jsx" },
+  { code: `foo.map((baz, i) => React.cloneElement(someChild, { ...someChild.props }))`, filename: "test.jsx" },
+  { code: `foo.map((baz, i) => cloneElement(someChild, { ...someChild.props }))`, filename: "test.jsx" },
+  { code: `
+        foo.map((item, i) => {
+          return React.cloneElement(someChild, {
+            key: item.id
+          })
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        foo.map((item, i) => {
+          return cloneElement(someChild, {
+            key: item.id
+          })
+        })
+      `, filename: "test.jsx" },
+  { code: `foo.map((baz, i) => <Foo key />)`, filename: "test.jsx" },
+  { code: `foo.reduce((a, b) => a.concat(<Foo key={b.id} />), [])`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => <Foo key={i.baz.toString()} />)`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => <Foo key={i.toString} />)`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => <Foo key={String()} />)`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => <Foo key={String(baz)} />)`, filename: "test.jsx" },
+  { code: `foo.flatMap((a) => <Foo key={a} />)`, filename: "test.jsx" },
+  { code: `foo.reduce((a, b, i) => a.concat(<Foo key={b.id} />), [])`, filename: "test.jsx" },
+  { code: `foo.reduceRight((a, b) => a.concat(<Foo key={b.id} />), [])`, filename: "test.jsx" },
+  { code: `foo.reduceRight((a, b, i) => a.concat(<Foo key={b.id} />), [])`, filename: "test.jsx" },
+  { code: `
+        React.Children.map(this.props.children, (child, index, arr) => {
+          return React.cloneElement(child, { key: child.id });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        React.Children.map(this.props.children, (child, index, arr) => {
+          return cloneElement(child, { key: child.id });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        Children.forEach(this.props.children, (child, index, arr) => {
+          return React.cloneElement(child, { key: child.id });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        Children.forEach(this.props.children, (child, index, arr) => {
+          return cloneElement(child, { key: child.id });
+        })
+      `, filename: "test.jsx" },
+  { code: `foo?.map(child => <Foo key={child.i} />)`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => <Foo key={i} />)`, filename: "test.jsx" },
+  { code: `[{}, {}].map((bar, i) => <Foo key={i} />)`, filename: "test.jsx" },
+  { code: `foo.map((bar, anything) => <Foo key={anything} />)`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => <Foo key={\`foo-\${i}\`} />)`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => <Foo key={'foo-' + i} />)`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => <Foo key={'foo-' + i + '-bar'} />)`, filename: "test.jsx" },
+  { code: `foo.map((baz, i) => React.cloneElement(someChild, { ...someChild.props, key: i }))`, filename: "test.jsx" },
+  { code: `
+        import { cloneElement } from 'react';
+
+        foo.map((baz, i) => cloneElement(someChild, { ...someChild.props, key: i }))
+      `, filename: "test.jsx" },
+  { code: `
+        foo.map((item, i) => {
+          return React.cloneElement(someChild, {
+            key: i
+          })
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        import { cloneElement } from 'react';
+
+        foo.map((item, i) => {
+          return cloneElement(someChild, {
+            key: i
+          })
+        })
+      `, filename: "test.jsx" },
+  { code: `foo.forEach((bar, i) => { baz.push(<Foo key={i} />); })`, filename: "test.jsx" },
+  { code: `foo.filter((bar, i) => { baz.push(<Foo key={i} />); })`, filename: "test.jsx" },
+  { code: `foo.some((bar, i) => { baz.push(<Foo key={i} />); })`, filename: "test.jsx" },
+  { code: `foo.every((bar, i) => { baz.push(<Foo key={i} />); })`, filename: "test.jsx" },
+  { code: `foo.find((bar, i) => { baz.push(<Foo key={i} />); })`, filename: "test.jsx" },
+  { code: `foo.findIndex((bar, i) => { baz.push(<Foo key={i} />); })`, filename: "test.jsx" },
+  { code: `foo.reduce((a, b, i) => a.concat(<Foo key={i} />), [])`, filename: "test.jsx" },
+  { code: `foo.flatMap((a, i) => <Foo key={i} />)`, filename: "test.jsx" },
+  { code: `foo.reduceRight((a, b, i) => a.concat(<Foo key={i} />), [])`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => React.createElement('Foo', { key: i }))`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => React.createElement('Foo', { key: \`foo-\${i}\` }))`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => React.createElement('Foo', { key: 'foo-' + i }))`, filename: "test.jsx" },
+  { code: `foo.map((bar, i) => React.createElement('Foo', { key: 'foo-' + i + '-bar' }))`, filename: "test.jsx" },
+  { code: `foo.forEach((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`, filename: "test.jsx" },
+  { code: `foo.filter((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`, filename: "test.jsx" },
+  { code: `foo.some((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`, filename: "test.jsx" },
+  { code: `foo.every((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`, filename: "test.jsx" },
+  { code: `foo.find((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`, filename: "test.jsx" },
+  { code: `foo.findIndex((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`, filename: "test.jsx" },
+  { code: `
+        Children.map(this.props.children, (child, index) => {
+          return React.cloneElement(child, { key: index });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        import { cloneElement } from 'react';
+
+        Children.map(this.props.children, (child, index) => {
+          return cloneElement(child, { key: index });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        React.Children.map(this.props.children, (child, index) => {
+          return React.cloneElement(child, { key: index });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        import { cloneElement } from 'react';
+
+        React.Children.map(this.props.children, (child, index) => {
+          return cloneElement(child, { key: index });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        Children.forEach(this.props.children, (child, index) => {
+          return React.cloneElement(child, { key: index });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        import { cloneElement } from 'react';
+
+        Children.forEach(this.props.children, (child, index) => {
+          return cloneElement(child, { key: index });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        React.Children.forEach(this.props.children, (child, index) => {
+          return React.cloneElement(child, { key: index });
+        })
+      `, filename: "test.jsx" },
+  { code: `
+        import { cloneElement } from 'react';
+
+        React.Children.forEach(this.props.children, (child, index) => {
+          return cloneElement(child, { key: index });
+        })
+      `, filename: "test.jsx" },
+  { code: `foo?.map((child, i) => <Foo key={i} />)`, filename: "test.jsx" },
+  { code: `
+        foo.map((bar, index) => (
+          <Element key={index.toString()} bar={bar} />
+        ))
+      `, filename: "test.jsx" },
+  { code: `
+        foo.map((bar, index) => (
+          <Element key={String(index)} bar={bar} />
+        ))
+      `, filename: "test.jsx" },
+  { code: `
+        foo.map((bar, index) => (
+          <Element key={index} bar={bar} />
+        ))
+      `, filename: "test.jsx" },
+];
+
 describe("no-array-index-key", () => {
+  let results: Diagnostic[][];
+  let ruleActive = false;
+
+  beforeAll(async () => {
+    results = await batchLint(PROJECT_DIR, cases);
+
+    // Check if the rule is active — at least one invalid case must fire
+    const invalidResults = results.slice(VALID_COUNT);
+    ruleActive = invalidResults.some(
+      (diags) => ruleErrors(diags, RULE_NAME, RULE_MESSAGES).length > 0
+    );
+  });
+
   describe("valid", () => {
-    it("valid[0]: <Foo key=\"foo\" />;", async ({ task }) => {
+    it("valid[0]: <Foo key=\"foo\" />;", ({ task }) => {
       const code = `<Foo key="foo" />;`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 0)\n\n--- Source code under test ---\n<Foo key=\"foo\" />;\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[0], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[1]: <Foo key={i} />;", async ({ task }) => {
+    it("valid[1]: <Foo key={i} />;", ({ task }) => {
       const code = `<Foo key={i} />;`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 1)\n\n--- Source code under test ---\n<Foo key={i} />;\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[1], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[2]: <Foo key />;", async ({ task }) => {
+    it("valid[2]: <Foo key />;", ({ task }) => {
       const code = `<Foo key />;`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 2)\n\n--- Source code under test ---\n<Foo key />;\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[2], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[3]: <Foo key={`foo-${i}`} />;", async ({ task }) => {
+    it("valid[3]: <Foo key={`foo-${i}`} />;", ({ task }) => {
       const code = `<Foo key={\`foo-\${i}\`} />;`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 3)\n\n--- Source code under test ---\n<Foo key={`foo-${i}`} />;\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[3], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[4]: <Foo key={'foo-' + i} />;", async ({ task }) => {
+    it("valid[4]: <Foo key={'foo-' + i} />;", ({ task }) => {
       const code = `<Foo key={'foo-' + i} />;`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 4)\n\n--- Source code under test ---\n<Foo key={'foo-' + i} />;\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[4], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[5]: foo.bar((baz, i) => <Foo key={i} />)", async ({ task }) => {
+    it("valid[5]: foo.bar((baz, i) => <Foo key={i} />)", ({ task }) => {
       const code = `foo.bar((baz, i) => <Foo key={i} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 5)\n\n--- Source code under test ---\nfoo.bar((baz, i) => <Foo key={i} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[5], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[6]: foo.bar((bar, i) => <Foo key={`foo-${i}`} />)", async ({ task }) => {
+    it("valid[6]: foo.bar((bar, i) => <Foo key={`foo-${i}`} />)", ({ task }) => {
       const code = `foo.bar((bar, i) => <Foo key={\`foo-\${i}\`} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 6)\n\n--- Source code under test ---\nfoo.bar((bar, i) => <Foo key={`foo-${i}`} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[6], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[7]: foo.bar((bar, i) => <Foo key={'foo-' + i} />)", async ({ task }) => {
+    it("valid[7]: foo.bar((bar, i) => <Foo key={'foo-' + i} />)", ({ task }) => {
       const code = `foo.bar((bar, i) => <Foo key={'foo-' + i} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 7)\n\n--- Source code under test ---\nfoo.bar((bar, i) => <Foo key={'foo-' + i} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[7], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[8]: foo.map((baz) => <Foo key={baz.id} />)", async ({ task }) => {
+    it("valid[8]: foo.map((baz) => <Foo key={baz.id} />)", ({ task }) => {
       const code = `foo.map((baz) => <Foo key={baz.id} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 8)\n\n--- Source code under test ---\nfoo.map((baz) => <Foo key={baz.id} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[8], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[9]: foo.map((baz, i) => <Foo key={baz.id} />)", async ({ task }) => {
+    it("valid[9]: foo.map((baz, i) => <Foo key={baz.id} />)", ({ task }) => {
       const code = `foo.map((baz, i) => <Foo key={baz.id} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 9)\n\n--- Source code under test ---\nfoo.map((baz, i) => <Foo key={baz.id} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[9], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[10]: foo.map((baz, i) => <Foo key={'foo' + baz.id} />)", async ({ task }) => {
+    it("valid[10]: foo.map((baz, i) => <Foo key={'foo' + baz.id} />)", ({ task }) => {
       const code = `foo.map((baz, i) => <Foo key={'foo' + baz.id} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 10)\n\n--- Source code under test ---\nfoo.map((baz, i) => <Foo key={'foo' + baz.id} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[10], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[11]: foo.map((baz, i) => React.cloneElement(someChild, { ...so...", async ({ task }) => {
+    it("valid[11]: foo.map((baz, i) => React.cloneElement(someChild, { ...so...", ({ task }) => {
       const code = `foo.map((baz, i) => React.cloneElement(someChild, { ...someChild.props }))`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 11)\n\n--- Source code under test ---\nfoo.map((baz, i) => React.cloneElement(someChild, { ...someChild.props }))\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[11], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[12]: foo.map((baz, i) => cloneElement(someChild, { ...someChil...", async ({ task }) => {
+    it("valid[12]: foo.map((baz, i) => cloneElement(someChild, { ...someChil...", ({ task }) => {
       const code = `foo.map((baz, i) => cloneElement(someChild, { ...someChild.props }))`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 12)\n\n--- Source code under test ---\nfoo.map((baz, i) => cloneElement(someChild, { ...someChild.props }))\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[12], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[13]: foo.map((item, i) => { return React.cloneElement(someChil...", async ({ task }) => {
+    it("valid[13]: foo.map((item, i) => { return React.cloneElement(someChil...", ({ task }) => {
       const code = `
         foo.map((item, i) => {
           return React.cloneElement(someChild, {
@@ -136,12 +324,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 13)\n\n--- Source code under test ---\n\n        foo.map((item, i) => {\n          return React.cloneElement(someChild, {\n            key: item.id\n          })\n        })\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[13], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[14]: foo.map((item, i) => { return cloneElement(someChild, { k...", async ({ task }) => {
+    it("valid[14]: foo.map((item, i) => { return cloneElement(someChild, { k...", ({ task }) => {
       const code = `
         foo.map((item, i) => {
           return cloneElement(someChild, {
@@ -151,102 +339,102 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 14)\n\n--- Source code under test ---\n\n        foo.map((item, i) => {\n          return cloneElement(someChild, {\n            key: item.id\n          })\n        })\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[14], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[15]: foo.map((baz, i) => <Foo key />)", async ({ task }) => {
+    it("valid[15]: foo.map((baz, i) => <Foo key />)", ({ task }) => {
       const code = `foo.map((baz, i) => <Foo key />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 15)\n\n--- Source code under test ---\nfoo.map((baz, i) => <Foo key />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[15], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[16]: foo.reduce((a, b) => a.concat(<Foo key={b.id} />), [])", async ({ task }) => {
+    it("valid[16]: foo.reduce((a, b) => a.concat(<Foo key={b.id} />), [])", ({ task }) => {
       const code = `foo.reduce((a, b) => a.concat(<Foo key={b.id} />), [])`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 16)\n\n--- Source code under test ---\nfoo.reduce((a, b) => a.concat(<Foo key={b.id} />), [])\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[16], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[17]: foo.map((bar, i) => <Foo key={i.baz.toString()} />)", async ({ task }) => {
+    it("valid[17]: foo.map((bar, i) => <Foo key={i.baz.toString()} />)", ({ task }) => {
       const code = `foo.map((bar, i) => <Foo key={i.baz.toString()} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 17)\n\n--- Source code under test ---\nfoo.map((bar, i) => <Foo key={i.baz.toString()} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[17], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[18]: foo.map((bar, i) => <Foo key={i.toString} />)", async ({ task }) => {
+    it("valid[18]: foo.map((bar, i) => <Foo key={i.toString} />)", ({ task }) => {
       const code = `foo.map((bar, i) => <Foo key={i.toString} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 18)\n\n--- Source code under test ---\nfoo.map((bar, i) => <Foo key={i.toString} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[18], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[19]: foo.map((bar, i) => <Foo key={String()} />)", async ({ task }) => {
+    it("valid[19]: foo.map((bar, i) => <Foo key={String()} />)", ({ task }) => {
       const code = `foo.map((bar, i) => <Foo key={String()} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 19)\n\n--- Source code under test ---\nfoo.map((bar, i) => <Foo key={String()} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[19], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[20]: foo.map((bar, i) => <Foo key={String(baz)} />)", async ({ task }) => {
+    it("valid[20]: foo.map((bar, i) => <Foo key={String(baz)} />)", ({ task }) => {
       const code = `foo.map((bar, i) => <Foo key={String(baz)} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 20)\n\n--- Source code under test ---\nfoo.map((bar, i) => <Foo key={String(baz)} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[20], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[21]: foo.flatMap((a) => <Foo key={a} />)", async ({ task }) => {
+    it("valid[21]: foo.flatMap((a) => <Foo key={a} />)", ({ task }) => {
       const code = `foo.flatMap((a) => <Foo key={a} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 21)\n\n--- Source code under test ---\nfoo.flatMap((a) => <Foo key={a} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[21], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[22]: foo.reduce((a, b, i) => a.concat(<Foo key={b.id} />), [])", async ({ task }) => {
+    it("valid[22]: foo.reduce((a, b, i) => a.concat(<Foo key={b.id} />), [])", ({ task }) => {
       const code = `foo.reduce((a, b, i) => a.concat(<Foo key={b.id} />), [])`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 22)\n\n--- Source code under test ---\nfoo.reduce((a, b, i) => a.concat(<Foo key={b.id} />), [])\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[22], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[23]: foo.reduceRight((a, b) => a.concat(<Foo key={b.id} />), [])", async ({ task }) => {
+    it("valid[23]: foo.reduceRight((a, b) => a.concat(<Foo key={b.id} />), [])", ({ task }) => {
       const code = `foo.reduceRight((a, b) => a.concat(<Foo key={b.id} />), [])`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 23)\n\n--- Source code under test ---\nfoo.reduceRight((a, b) => a.concat(<Foo key={b.id} />), [])\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[23], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[24]: foo.reduceRight((a, b, i) => a.concat(<Foo key={b.id} />)...", async ({ task }) => {
+    it("valid[24]: foo.reduceRight((a, b, i) => a.concat(<Foo key={b.id} />)...", ({ task }) => {
       const code = `foo.reduceRight((a, b, i) => a.concat(<Foo key={b.id} />), [])`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 24)\n\n--- Source code under test ---\nfoo.reduceRight((a, b, i) => a.concat(<Foo key={b.id} />), [])\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[24], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[25]: React.Children.map(this.props.children, (child, index, ar...", async ({ task }) => {
+    it("valid[25]: React.Children.map(this.props.children, (child, index, ar...", ({ task }) => {
       const code = `
         React.Children.map(this.props.children, (child, index, arr) => {
           return React.cloneElement(child, { key: child.id });
@@ -254,12 +442,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 25)\n\n--- Source code under test ---\n\n        React.Children.map(this.props.children, (child, index, arr) => {\n          return React.cloneElement(child, { key: child.id });\n        })\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[25], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[26]: React.Children.map(this.props.children, (child, index, ar...", async ({ task }) => {
+    it("valid[26]: React.Children.map(this.props.children, (child, index, ar...", ({ task }) => {
       const code = `
         React.Children.map(this.props.children, (child, index, arr) => {
           return cloneElement(child, { key: child.id });
@@ -267,12 +455,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 26)\n\n--- Source code under test ---\n\n        React.Children.map(this.props.children, (child, index, arr) => {\n          return cloneElement(child, { key: child.id });\n        })\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[26], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[27]: Children.forEach(this.props.children, (child, index, arr)...", async ({ task }) => {
+    it("valid[27]: Children.forEach(this.props.children, (child, index, arr)...", ({ task }) => {
       const code = `
         Children.forEach(this.props.children, (child, index, arr) => {
           return React.cloneElement(child, { key: child.id });
@@ -280,12 +468,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 27)\n\n--- Source code under test ---\n\n        Children.forEach(this.props.children, (child, index, arr) => {\n          return React.cloneElement(child, { key: child.id });\n        })\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[27], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[28]: Children.forEach(this.props.children, (child, index, arr)...", async ({ task }) => {
+    it("valid[28]: Children.forEach(this.props.children, (child, index, arr)...", ({ task }) => {
       const code = `
         Children.forEach(this.props.children, (child, index, arr) => {
           return cloneElement(child, { key: child.id });
@@ -293,94 +481,87 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 28)\n\n--- Source code under test ---\n\n        Children.forEach(this.props.children, (child, index, arr) => {\n          return cloneElement(child, { key: child.id });\n        })\n      \n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[28], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
-    it("valid[29]: foo?.map(child => <Foo key={child.i} />)", async ({ task }) => {
+    it("valid[29]: foo?.map(child => <Foo key={child.i} />)", ({ task }) => {
       const code = `foo?.map(child => <Foo key={child.i} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: valid (index 29)\n\n--- Source code under test ---\nfoo?.map(child => <Foo key={child.i} />)\n\nThis code is VALID — the rule should produce NO diagnostics for it.\n\nFeatures: optional chaining\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      expect(ruleActive, `Rule "${RULE_NAME}" produced no diagnostics on any invalid case. Is the plugin loaded?`).toBe(true);
+      const matches = ruleErrors(results[29], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(0);
     });
 
   });
 
   describe("invalid", () => {
-    it("invalid[0]: foo.map((bar, i) => <Foo key={i} />)", async ({ task }) => {
+    it("invalid[0]: foo.map((bar, i) => <Foo key={i} />)", ({ task }) => {
       const code = `foo.map((bar, i) => <Foo key={i} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 0)\n\n--- Source code under test ---\nfoo.map((bar, i) => <Foo key={i} />)\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[30], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[1]: [{}, {}].map((bar, i) => <Foo key={i} />)", async ({ task }) => {
+    it("invalid[1]: [{}, {}].map((bar, i) => <Foo key={i} />)", ({ task }) => {
       const code = `[{}, {}].map((bar, i) => <Foo key={i} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 1)\n\n--- Source code under test ---\n[{}, {}].map((bar, i) => <Foo key={i} />)\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[31], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[2]: foo.map((bar, anything) => <Foo key={anything} />)", async ({ task }) => {
+    it("invalid[2]: foo.map((bar, anything) => <Foo key={anything} />)", ({ task }) => {
       const code = `foo.map((bar, anything) => <Foo key={anything} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 2)\n\n--- Source code under test ---\nfoo.map((bar, anything) => <Foo key={anything} />)\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[32], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[3]: foo.map((bar, i) => <Foo key={`foo-${i}`} />)", async ({ task }) => {
+    it("invalid[3]: foo.map((bar, i) => <Foo key={`foo-${i}`} />)", ({ task }) => {
       const code = `foo.map((bar, i) => <Foo key={\`foo-\${i}\`} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 3)\n\n--- Source code under test ---\nfoo.map((bar, i) => <Foo key={`foo-${i}`} />)\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[33], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[4]: foo.map((bar, i) => <Foo key={'foo-' + i} />)", async ({ task }) => {
+    it("invalid[4]: foo.map((bar, i) => <Foo key={'foo-' + i} />)", ({ task }) => {
       const code = `foo.map((bar, i) => <Foo key={'foo-' + i} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 4)\n\n--- Source code under test ---\nfoo.map((bar, i) => <Foo key={'foo-' + i} />)\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[34], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[5]: foo.map((bar, i) => <Foo key={'foo-' + i + '-bar'} />)", async ({ task }) => {
+    it("invalid[5]: foo.map((bar, i) => <Foo key={'foo-' + i + '-bar'} />)", ({ task }) => {
       const code = `foo.map((bar, i) => <Foo key={'foo-' + i + '-bar'} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 5)\n\n--- Source code under test ---\nfoo.map((bar, i) => <Foo key={'foo-' + i + '-bar'} />)\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[35], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[6]: foo.map((baz, i) => React.cloneElement(someChild, { ...so...", async ({ task }) => {
+    it("invalid[6]: foo.map((baz, i) => React.cloneElement(someChild, { ...so...", ({ task }) => {
       const code = `foo.map((baz, i) => React.cloneElement(someChild, { ...someChild.props, key: i }))`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 6)\n\n--- Source code under test ---\nfoo.map((baz, i) => React.cloneElement(someChild, { ...someChild.props, key: i }))\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[36], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[7]: import { cloneElement } from 'react'; foo.map((baz, i) =>...", async ({ task }) => {
+    it("invalid[7]: import { cloneElement } from 'react'; foo.map((baz, i) =>...", ({ task }) => {
       const code = `
         import { cloneElement } from 'react';
 
@@ -388,13 +569,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 7)\n\n--- Source code under test ---\n\n        import { cloneElement } from 'react';\n\n        foo.map((baz, i) => cloneElement(someChild, { ...someChild.props, key: i }))\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[37], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[8]: foo.map((item, i) => { return React.cloneElement(someChil...", async ({ task }) => {
+    it("invalid[8]: foo.map((item, i) => { return React.cloneElement(someChil...", ({ task }) => {
       const code = `
         foo.map((item, i) => {
           return React.cloneElement(someChild, {
@@ -404,13 +584,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 8)\n\n--- Source code under test ---\n\n        foo.map((item, i) => {\n          return React.cloneElement(someChild, {\n            key: i\n          })\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[38], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[9]: import { cloneElement } from 'react'; foo.map((item, i) =...", async ({ task }) => {
+    it("invalid[9]: import { cloneElement } from 'react'; foo.map((item, i) =...", ({ task }) => {
       const code = `
         import { cloneElement } from 'react';
 
@@ -422,203 +601,183 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 9)\n\n--- Source code under test ---\n\n        import { cloneElement } from 'react';\n\n        foo.map((item, i) => {\n          return cloneElement(someChild, {\n            key: i\n          })\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[39], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[10]: foo.forEach((bar, i) => { baz.push(<Foo key={i} />); })", async ({ task }) => {
+    it("invalid[10]: foo.forEach((bar, i) => { baz.push(<Foo key={i} />); })", ({ task }) => {
       const code = `foo.forEach((bar, i) => { baz.push(<Foo key={i} />); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 10)\n\n--- Source code under test ---\nfoo.forEach((bar, i) => { baz.push(<Foo key={i} />); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[40], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[11]: foo.filter((bar, i) => { baz.push(<Foo key={i} />); })", async ({ task }) => {
+    it("invalid[11]: foo.filter((bar, i) => { baz.push(<Foo key={i} />); })", ({ task }) => {
       const code = `foo.filter((bar, i) => { baz.push(<Foo key={i} />); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 11)\n\n--- Source code under test ---\nfoo.filter((bar, i) => { baz.push(<Foo key={i} />); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[41], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[12]: foo.some((bar, i) => { baz.push(<Foo key={i} />); })", async ({ task }) => {
+    it("invalid[12]: foo.some((bar, i) => { baz.push(<Foo key={i} />); })", ({ task }) => {
       const code = `foo.some((bar, i) => { baz.push(<Foo key={i} />); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 12)\n\n--- Source code under test ---\nfoo.some((bar, i) => { baz.push(<Foo key={i} />); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[42], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[13]: foo.every((bar, i) => { baz.push(<Foo key={i} />); })", async ({ task }) => {
+    it("invalid[13]: foo.every((bar, i) => { baz.push(<Foo key={i} />); })", ({ task }) => {
       const code = `foo.every((bar, i) => { baz.push(<Foo key={i} />); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 13)\n\n--- Source code under test ---\nfoo.every((bar, i) => { baz.push(<Foo key={i} />); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[43], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[14]: foo.find((bar, i) => { baz.push(<Foo key={i} />); })", async ({ task }) => {
+    it("invalid[14]: foo.find((bar, i) => { baz.push(<Foo key={i} />); })", ({ task }) => {
       const code = `foo.find((bar, i) => { baz.push(<Foo key={i} />); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 14)\n\n--- Source code under test ---\nfoo.find((bar, i) => { baz.push(<Foo key={i} />); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[44], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[15]: foo.findIndex((bar, i) => { baz.push(<Foo key={i} />); })", async ({ task }) => {
+    it("invalid[15]: foo.findIndex((bar, i) => { baz.push(<Foo key={i} />); })", ({ task }) => {
       const code = `foo.findIndex((bar, i) => { baz.push(<Foo key={i} />); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 15)\n\n--- Source code under test ---\nfoo.findIndex((bar, i) => { baz.push(<Foo key={i} />); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[45], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[16]: foo.reduce((a, b, i) => a.concat(<Foo key={i} />), [])", async ({ task }) => {
+    it("invalid[16]: foo.reduce((a, b, i) => a.concat(<Foo key={i} />), [])", ({ task }) => {
       const code = `foo.reduce((a, b, i) => a.concat(<Foo key={i} />), [])`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 16)\n\n--- Source code under test ---\nfoo.reduce((a, b, i) => a.concat(<Foo key={i} />), [])\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[46], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[17]: foo.flatMap((a, i) => <Foo key={i} />)", async ({ task }) => {
+    it("invalid[17]: foo.flatMap((a, i) => <Foo key={i} />)", ({ task }) => {
       const code = `foo.flatMap((a, i) => <Foo key={i} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 17)\n\n--- Source code under test ---\nfoo.flatMap((a, i) => <Foo key={i} />)\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[47], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[18]: foo.reduceRight((a, b, i) => a.concat(<Foo key={i} />), [])", async ({ task }) => {
+    it("invalid[18]: foo.reduceRight((a, b, i) => a.concat(<Foo key={i} />), [])", ({ task }) => {
       const code = `foo.reduceRight((a, b, i) => a.concat(<Foo key={i} />), [])`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 18)\n\n--- Source code under test ---\nfoo.reduceRight((a, b, i) => a.concat(<Foo key={i} />), [])\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[48], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[19]: foo.map((bar, i) => React.createElement('Foo', { key: i }))", async ({ task }) => {
+    it("invalid[19]: foo.map((bar, i) => React.createElement('Foo', { key: i }))", ({ task }) => {
       const code = `foo.map((bar, i) => React.createElement('Foo', { key: i }))`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 19)\n\n--- Source code under test ---\nfoo.map((bar, i) => React.createElement('Foo', { key: i }))\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[49], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[20]: foo.map((bar, i) => React.createElement('Foo', { key: `fo...", async ({ task }) => {
+    it("invalid[20]: foo.map((bar, i) => React.createElement('Foo', { key: `fo...", ({ task }) => {
       const code = `foo.map((bar, i) => React.createElement('Foo', { key: \`foo-\${i}\` }))`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 20)\n\n--- Source code under test ---\nfoo.map((bar, i) => React.createElement('Foo', { key: `foo-${i}` }))\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[50], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[21]: foo.map((bar, i) => React.createElement('Foo', { key: 'fo...", async ({ task }) => {
+    it("invalid[21]: foo.map((bar, i) => React.createElement('Foo', { key: 'fo...", ({ task }) => {
       const code = `foo.map((bar, i) => React.createElement('Foo', { key: 'foo-' + i }))`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 21)\n\n--- Source code under test ---\nfoo.map((bar, i) => React.createElement('Foo', { key: 'foo-' + i }))\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[51], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[22]: foo.map((bar, i) => React.createElement('Foo', { key: 'fo...", async ({ task }) => {
+    it("invalid[22]: foo.map((bar, i) => React.createElement('Foo', { key: 'fo...", ({ task }) => {
       const code = `foo.map((bar, i) => React.createElement('Foo', { key: 'foo-' + i + '-bar' }))`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 22)\n\n--- Source code under test ---\nfoo.map((bar, i) => React.createElement('Foo', { key: 'foo-' + i + '-bar' }))\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[52], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[23]: foo.forEach((bar, i) => { baz.push(React.createElement('F...", async ({ task }) => {
+    it("invalid[23]: foo.forEach((bar, i) => { baz.push(React.createElement('F...", ({ task }) => {
       const code = `foo.forEach((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 23)\n\n--- Source code under test ---\nfoo.forEach((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[53], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[24]: foo.filter((bar, i) => { baz.push(React.createElement('Fo...", async ({ task }) => {
+    it("invalid[24]: foo.filter((bar, i) => { baz.push(React.createElement('Fo...", ({ task }) => {
       const code = `foo.filter((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 24)\n\n--- Source code under test ---\nfoo.filter((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[54], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[25]: foo.some((bar, i) => { baz.push(React.createElement('Foo'...", async ({ task }) => {
+    it("invalid[25]: foo.some((bar, i) => { baz.push(React.createElement('Foo'...", ({ task }) => {
       const code = `foo.some((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 25)\n\n--- Source code under test ---\nfoo.some((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[55], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[26]: foo.every((bar, i) => { baz.push(React.createElement('Foo...", async ({ task }) => {
+    it("invalid[26]: foo.every((bar, i) => { baz.push(React.createElement('Foo...", ({ task }) => {
       const code = `foo.every((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 26)\n\n--- Source code under test ---\nfoo.every((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[56], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[27]: foo.find((bar, i) => { baz.push(React.createElement('Foo'...", async ({ task }) => {
+    it("invalid[27]: foo.find((bar, i) => { baz.push(React.createElement('Foo'...", ({ task }) => {
       const code = `foo.find((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 27)\n\n--- Source code under test ---\nfoo.find((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[57], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[28]: foo.findIndex((bar, i) => { baz.push(React.createElement(...", async ({ task }) => {
+    it("invalid[28]: foo.findIndex((bar, i) => { baz.push(React.createElement(...", ({ task }) => {
       const code = `foo.findIndex((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 28)\n\n--- Source code under test ---\nfoo.findIndex((bar, i) => { baz.push(React.createElement('Foo', { key: i })); })\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[58], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[29]: Children.map(this.props.children, (child, index) => { ret...", async ({ task }) => {
+    it("invalid[29]: Children.map(this.props.children, (child, index) => { ret...", ({ task }) => {
       const code = `
         Children.map(this.props.children, (child, index) => {
           return React.cloneElement(child, { key: index });
@@ -626,13 +785,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 29)\n\n--- Source code under test ---\n\n        Children.map(this.props.children, (child, index) => {\n          return React.cloneElement(child, { key: index });\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[59], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[30]: import { cloneElement } from 'react'; Children.map(this.p...", async ({ task }) => {
+    it("invalid[30]: import { cloneElement } from 'react'; Children.map(this.p...", ({ task }) => {
       const code = `
         import { cloneElement } from 'react';
 
@@ -642,13 +800,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 30)\n\n--- Source code under test ---\n\n        import { cloneElement } from 'react';\n\n        Children.map(this.props.children, (child, index) => {\n          return cloneElement(child, { key: index });\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[60], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[31]: React.Children.map(this.props.children, (child, index) =>...", async ({ task }) => {
+    it("invalid[31]: React.Children.map(this.props.children, (child, index) =>...", ({ task }) => {
       const code = `
         React.Children.map(this.props.children, (child, index) => {
           return React.cloneElement(child, { key: index });
@@ -656,13 +813,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 31)\n\n--- Source code under test ---\n\n        React.Children.map(this.props.children, (child, index) => {\n          return React.cloneElement(child, { key: index });\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[61], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[32]: import { cloneElement } from 'react'; React.Children.map(...", async ({ task }) => {
+    it("invalid[32]: import { cloneElement } from 'react'; React.Children.map(...", ({ task }) => {
       const code = `
         import { cloneElement } from 'react';
 
@@ -672,13 +828,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 32)\n\n--- Source code under test ---\n\n        import { cloneElement } from 'react';\n\n        React.Children.map(this.props.children, (child, index) => {\n          return cloneElement(child, { key: index });\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[62], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[33]: Children.forEach(this.props.children, (child, index) => {...", async ({ task }) => {
+    it("invalid[33]: Children.forEach(this.props.children, (child, index) => {...", ({ task }) => {
       const code = `
         Children.forEach(this.props.children, (child, index) => {
           return React.cloneElement(child, { key: index });
@@ -686,13 +841,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 33)\n\n--- Source code under test ---\n\n        Children.forEach(this.props.children, (child, index) => {\n          return React.cloneElement(child, { key: index });\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[63], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[34]: import { cloneElement } from 'react'; Children.forEach(th...", async ({ task }) => {
+    it("invalid[34]: import { cloneElement } from 'react'; Children.forEach(th...", ({ task }) => {
       const code = `
         import { cloneElement } from 'react';
 
@@ -702,13 +856,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 34)\n\n--- Source code under test ---\n\n        import { cloneElement } from 'react';\n\n        Children.forEach(this.props.children, (child, index) => {\n          return cloneElement(child, { key: index });\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[64], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[35]: React.Children.forEach(this.props.children, (child, index...", async ({ task }) => {
+    it("invalid[35]: React.Children.forEach(this.props.children, (child, index...", ({ task }) => {
       const code = `
         React.Children.forEach(this.props.children, (child, index) => {
           return React.cloneElement(child, { key: index });
@@ -716,13 +869,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 35)\n\n--- Source code under test ---\n\n        React.Children.forEach(this.props.children, (child, index) => {\n          return React.cloneElement(child, { key: index });\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[65], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[36]: import { cloneElement } from 'react'; React.Children.forE...", async ({ task }) => {
+    it("invalid[36]: import { cloneElement } from 'react'; React.Children.forE...", ({ task }) => {
       const code = `
         import { cloneElement } from 'react';
 
@@ -732,23 +884,21 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 36)\n\n--- Source code under test ---\n\n        import { cloneElement } from 'react';\n\n        React.Children.forEach(this.props.children, (child, index) => {\n          return cloneElement(child, { key: index });\n        })\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[66], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[37]: foo?.map((child, i) => <Foo key={i} />)", async ({ task }) => {
+    it("invalid[37]: foo?.map((child, i) => <Foo key={i} />)", ({ task }) => {
       const code = `foo?.map((child, i) => <Foo key={i} />)`;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 37)\n\n--- Source code under test ---\nfoo?.map((child, i) => <Foo key={i} />)\n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nFeatures: optional chaining\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[67], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[38]: foo.map((bar, index) => ( <Element key={index.toString()}...", async ({ task }) => {
+    it("invalid[38]: foo.map((bar, index) => ( <Element key={index.toString()}...", ({ task }) => {
       const code = `
         foo.map((bar, index) => (
           <Element key={index.toString()} bar={bar} />
@@ -756,13 +906,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 38)\n\n--- Source code under test ---\n\n        foo.map((bar, index) => (\n          <Element key={index.toString()} bar={bar} />\n        ))\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[68], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[39]: foo.map((bar, index) => ( <Element key={String(index)} ba...", async ({ task }) => {
+    it("invalid[39]: foo.map((bar, index) => ( <Element key={String(index)} ba...", ({ task }) => {
       const code = `
         foo.map((bar, index) => (
           <Element key={String(index)} bar={bar} />
@@ -770,13 +919,12 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 39)\n\n--- Source code under test ---\n\n        foo.map((bar, index) => (\n          <Element key={String(index)} bar={bar} />\n        ))\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[69], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
 
-    it("invalid[40]: foo.map((bar, index) => ( <Element key={index} bar={bar} ...", async ({ task }) => {
+    it("invalid[40]: foo.map((bar, index) => ( <Element key={index} bar={bar} ...", ({ task }) => {
       const code = `
         foo.map((bar, index) => (
           <Element key={index} bar={bar} />
@@ -784,8 +932,7 @@ describe("no-array-index-key", () => {
       `;
       task.meta.source = code;
       task.meta.explanation = "Rule: no-array-index-key\nType: invalid (index 40)\n\n--- Source code under test ---\n\n        foo.map((bar, index) => (\n          <Element key={index} bar={bar} />\n        ))\n      \n\nThis code is INVALID — the rule should produce 1 diagnostic(s):\n  [0] (messageId: noArrayIndex): Do not use Array index in keys\n\nRule message templates:\n  noArrayIndex: Do not use Array index in keys";
-      const diags = await lint(PROJECT_DIR, code, "test.jsx");
-      const matches = ruleErrors(diags, "no-array-index-key", RULE_MESSAGES);
+      const matches = ruleErrors(results[70], RULE_NAME, RULE_MESSAGES);
       expect(matches).toHaveLength(1);
       expect(matches[0].message).toBe("Do not use Array index in keys");
     });
