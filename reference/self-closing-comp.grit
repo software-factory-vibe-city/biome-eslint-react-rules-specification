@@ -1,0 +1,17 @@
+// Rule: self-closing-comp
+// Components and DOM elements with no children should be self-closing.
+// Whitespace-only content (spaces, tabs, newlines) counts as empty.
+// However, `&nbsp;` entities and `{' '}` expressions are NOT empty.
+//
+// This demonstrates:
+//   - Matching open/close element pairs with no children
+//   - Handling whitespace-only children
+language js
+
+// Match elements with open+close tags but no children at all
+`<$tag $...attrs></$tag>` as $element where {
+    register_diagnostic(
+        span = $element,
+        message = "Empty components are self-closing"
+    )
+}

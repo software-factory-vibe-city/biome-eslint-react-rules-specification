@@ -1,0 +1,27 @@
+// Rule: no-danger
+// Disallow usage of dangerous JSX properties (dangerouslySetInnerHTML)
+// on DOM elements. Custom components (uppercase) are allowed to use them.
+//
+// Pattern: Match any JSX attribute named "dangerouslySetInnerHTML" that
+// appears on a lowercase (DOM) element.
+language js
+
+`<$element $...attrs />` where {
+    $element <: r"^[a-z]"(),
+    $attrs <: contains `dangerouslySetInnerHTML=$_` as $attr,
+    register_diagnostic(
+        span = $attr,
+        message = "Dangerous property 'dangerouslySetInnerHTML' found"
+    )
+}
+
+or
+
+`<$element $...attrs>$...children</$element>` where {
+    $element <: r"^[a-z]"(),
+    $attrs <: contains `dangerouslySetInnerHTML=$_` as $attr,
+    register_diagnostic(
+        span = $attr,
+        message = "Dangerous property 'dangerouslySetInnerHTML' found"
+    )
+}

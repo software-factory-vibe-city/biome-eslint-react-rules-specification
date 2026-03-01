@@ -1,0 +1,13 @@
+{
+  "name": "biome-react-rules-scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "tsx generate-tests.ts",
+    "verify": "tsx verify-tests.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}

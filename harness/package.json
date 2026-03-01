@@ -1,0 +1,12 @@
+{
+  "name": "harness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsx run-harness.ts"
+  },
+  "devDependencies": {
+    "vitest": "^3.1.4",
+    "tsx": "^4.19.0"
+  }
+}
